@@ -1,0 +1,408 @@
+/*
+ * Tests for io.github.pvzjre.portable.lawn.widget.NewOptionsDialog.
+ *
+ * The original version of this file also asserted `resizeAddsDialogOriginToChildren`: that the children
+ * carry the dialog's origin in their coordinates. That expectation encoded a bug - the origin is added
+ * twice (once here, once by the widget tree when it draws), which pushed every control outside the
+ * dialog's rectangle and let the dialog's own clip remove it - so it was deleted together with the fix
+ * rather than re-pinned. `controlsStayInsideTheDialog` now guards the opposite invariant.
+ */
+package io.github.pvzjre.portable.lawn.widget;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import io.github.pvzjre.portable.sexy.graphics.Image;
+import io.github.pvzjre.portable.sexy.graphics.MemoryImage;
+import io.github.pvzjre.portable.lawn.Dialogs;
+import io.github.pvzjre.portable.lawn.GameMode;
+import io.github.pvzjre.portable.lawn.LawnApp;
+import io.github.pvzjre.portable.lawn.Resources;
+import io.github.pvzjre.portable.sexy.Widget;
+import io.github.pvzjre.portable.test.HeadlessTestApp;
+
+/** Headless layout/behaviour checks for {@link NewOptionsDialog}. */
+class NewOptionsDialogTest {
+
+    /** The menuback dimensions upstream lays the dialog out against (NewOptionsDialog.cpp:116-160). */
+    private static final int MENUBACK_WIDTH = 423;
+    private static final int MENUBACK_HEIGHT = 498;
+
+    private Image mSavedMenuback;
+    private Image mSavedBackToGame;
+
+    private LawnApp mApp;
+
+    /** The fixture's images are 1x1; the dialog sizes itself from the menuback image. */
+    @BeforeEach
+    void installStubImages() {
+        mSavedMenuback = Resources.getImageById(Resources.IMAGE_OPTIONS_MENUBACK_ID);
+        mSavedBackToGame = Resources.getImageById(Resources.IMAGE_OPTIONS_BACKTOGAMEBUTTON0_ID);
+    }
+
+    @AfterEach
+    void restoreResources() {
+        Resources.setImageById(Resources.IMAGE_OPTIONS_MENUBACK_ID, mSavedMenuback);
+        Resources.setImageById(Resources.IMAGE_OPTIONS_BACKTOGAMEBUTTON0_ID, mSavedBackToGame);
+    }
+
+    private static Image stubImage(int theWidth, int theHeight) {
+        MemoryImage anImage = new MemoryImage(null);
+        anImage.create(theWidth, theHeight);
+        return anImage;
+    }
+
+    private LawnApp newApp() {
+        mApp = new LawnApp();
+        HeadlessTestApp.initialize(mApp);
+        // HeadlessTestApp binds 1x1 stub images; the dialog sizes itself from the menuback image.
+        Resources.setImageById(Resources.IMAGE_OPTIONS_MENUBACK_ID, stubImage(MENUBACK_WIDTH, MENUBACK_HEIGHT));
+        Resources.setImageById(Resources.IMAGE_OPTIONS_BACKTOGAMEBUTTON0_ID, stubImage(360, 100));
+        return mApp;
+    }
+
+    /** A dialog that has been centred and added, exactly like {@code LawnApp::DoOptionsDialog}. */
+    private static NewOptionsDialog newDialog(LawnApp theApp, boolean theFromGameSelector) {
+        NewOptionsDialog aDialog = new NewOptionsDialog(theApp, theFromGameSelector);
+        int aBackWidth = Resources.getImageById(Resources.IMAGE_OPTIONS_MENUBACK_ID).mWidth;
+        int aBackHeight = Resources.getImageById(Resources.IMAGE_OPTIONS_MENUBACK_ID).mHeight;
+        theApp.centerDialog(aDialog, aBackWidth, aBackHeight);
+        theApp.addDialog(aDialog);
+        return aDialog;
+    }
+
+    @Test
+    void controlsStayInsideTheDialog() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, false);
+
+        assertTrue(aDialog.mWidth > 0 && aDialog.mHeight > 0, "the dialog must have a size");
+        assertFalse(aDialog.mWidgets.isEmpty(), "the dialog must own its controls");
+        for (Widget aWidget : aDialog.mWidgets) {
+            assertTrue(aWidget.mX >= 0 && aWidget.mY >= 0
+                            && aWidget.mX + aWidget.mWidth <= aDialog.mWidth
+                            && aWidget.mY + aWidget.mHeight <= aDialog.mHeight,
+                    aWidget.getClass().getSimpleName() + " at " + aWidget.mX + "," + aWidget.mY + " "
+                            + aWidget.mWidth + "x" + aWidget.mHeight + " must stay inside the dialog "
+                            + aDialog.mWidth + "x" + aDialog.mHeight);
+        }
+    }
+
+    /** Every literal below is upstream's (NewOptionsDialog.cpp:147-160), in dialog coordinates. */
+    @Test
+    void layoutTableMatchesResizeLiterals() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, false);
+
+        assertEquals(199, aDialog.mMusicVolumeSlider.mX, "NewOptionsDialog.cpp:150");
+        assertEquals(116, aDialog.mMusicVolumeSlider.mY, "NewOptionsDialog.cpp:150");
+        assertEquals(135, aDialog.mMusicVolumeSlider.mWidth, "NewOptionsDialog.cpp:150");
+        assertEquals(40, aDialog.mMusicVolumeSlider.mHeight, "NewOptionsDialog.cpp:150");
+        assertEquals(199, aDialog.mSfxVolumeSlider.mX, "NewOptionsDialog.cpp:151");
+        assertEquals(143, aDialog.mSfxVolumeSlider.mY, "NewOptionsDialog.cpp:151");
+        assertEquals(294, aDialog.mVSyncCheckbox.mX, "NewOptionsDialog.cpp:152 + 11px, see HW_ACCEL_CHECKBOX_X");
+        assertEquals(175, aDialog.mVSyncCheckbox.mY, "NewOptionsDialog.cpp:152");
+        assertEquals(46, aDialog.mVSyncCheckbox.mWidth, "NewOptionsDialog.cpp:152");
+        assertEquals(45, aDialog.mVSyncCheckbox.mHeight, "NewOptionsDialog.cpp:152");
+        assertEquals(295, aDialog.mFullscreenCheckbox.mX, "NewOptionsDialog.cpp:153 + 11px, see HW_ACCEL_CHECKBOX_X");
+        assertEquals(206, aDialog.mFullscreenCheckbox.mY, "NewOptionsDialog.cpp:153");
+        assertEquals(107, aDialog.mAlmanacButton.mX, "NewOptionsDialog.cpp:154");
+        assertEquals(241, aDialog.mAlmanacButton.mY, "NewOptionsDialog.cpp:154");
+        assertEquals(209, aDialog.mAlmanacButton.mWidth, "NewOptionsDialog.cpp:154");
+        assertEquals(46, aDialog.mAlmanacButton.mHeight, "NewOptionsDialog.cpp:154");
+        assertEquals(241 + 43, aDialog.mRestartButton.mY, "NewOptionsDialog.cpp:155");
+        assertEquals(241 + 43 * 2, aDialog.mBackToMainButton.mY, "NewOptionsDialog.cpp:156");
+        assertEquals(30, aDialog.mBackToGameButton.mX, "NewOptionsDialog.cpp:157");
+        assertEquals(381, aDialog.mBackToGameButton.mY, "NewOptionsDialog.cpp:157");
+    }
+
+    /** The retail table banks the in-level button text under RESTART_BUTTON; RESTART_LEVEL is a
+     * question sentence there (see the PORT-NOTE in NewOptionsDialog), so the button must resolve
+     * that key. */
+    @Test
+    void restartButtonResolvesTheRetailRestartButtonKey() {
+        LawnApp app = newApp();
+        app.mStringProperties.put("RESTART_BUTTON", "重新开始");
+        NewOptionsDialog aDialog = newDialog(app, false);
+
+        assertEquals("重新开始", aDialog.mRestartButton.mLabel);
+    }
+
+    @Test
+    void getPreferredHeightReturnsMenubackWidth() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, false);
+
+        assertEquals(Resources.getImageById(Resources.IMAGE_OPTIONS_MENUBACK_ID).mWidth,
+                aDialog.getPreferredHeight(423), "NewOptionsDialog.cpp:116");
+    }
+
+    @Test
+    void selectorVariantKeepsTheCompactInLevelLayout() {
+        // PORT deviation: upstream spread the selector-variant control rows 5-20px apart
+        // (NewOptionsDialog.cpp:159-165), which left room for only two bottom buttons; this port
+        // keeps both variants on the same compact in-level layout
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, true);
+
+        assertEquals(116, aDialog.mMusicVolumeSlider.mY, "music slider matches the in-level row");
+        assertEquals(143, aDialog.mSfxVolumeSlider.mY, "sfx slider matches the in-level row");
+        assertEquals(175, aDialog.mVSyncCheckbox.mY, "the vsync checkbox takes the 3D-acceleration row");
+        assertEquals(206, aDialog.mFullscreenCheckbox.mY, "fullscreen row matches");
+        assertEquals(206, aDialog.mDebugInfoCheckbox.mY, "the debug checkbox rides with the fullscreen row");
+    }
+
+    @Test
+    void selectorVariantKeepsTheAlmanacHiddenButEvenSlots() {
+        // PORT deviation: upstream's selector-variant row offsets are dropped (compact layout),
+        // while the almanac button stays selector-hidden (upstream behaviour, restored after
+        // visual testing) — the two remaining buttons sit in their even slots
+        LawnApp app = newApp();
+        app.mPlayerInfo = app.mProfileMgr.addProfile("NewOptionsDialogTest");
+        app.mPlayerInfo.mLevel = 15; // canShowAlmanac would pass: finished adventure or level >= 15
+        NewOptionsDialog aDialog = newDialog(app, true);
+
+        assertFalse(aDialog.mAlmanacButton.mVisible, "the almanac stays selector-hidden");
+        assertEquals(284, aDialog.mDisclaimerButton.mY, "disclaimer rides the restart slot");
+        assertEquals(327, aDialog.mBackToMainButton.mY, "main-menu/credits slot");
+    }
+
+    @Test
+    void resizePushesAlmanacDownForZenGardenAndTreeOfWisdom() {
+        for (int aMode : new int[] {
+                GameMode.GAMEMODE_CHALLENGE_ZEN_GARDEN, GameMode.GAMEMODE_TREE_OF_WISDOM}) {
+            LawnApp app = newApp();
+            app.mGameMode = aMode;
+            NewOptionsDialog aDialog = newDialog(app, false);
+
+            assertEquals(241 + NewOptionsDialog.ZEN_TREE_ALMANAC_OFFSET_Y, aDialog.mAlmanacButton.mY,
+                    "mode " + aMode + " (NewOptionsDialog.cpp:166-169)");
+        }
+    }
+
+    @Test
+    void fromSelectorHidesRestartAndRequiresCreditsDecision() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, true);
+
+        assertFalse(aDialog.mRestartButton.mVisible,
+                "restarting a level from the selector makes no sense (NewOptionsDialog.cpp:190-200)");
+    }
+
+    /** Port addition: the disclaimer button lives one slot above the credits button, in the
+     * game-selector variant only. */
+    @Test
+    void disclaimerButtonSitsAboveTheCreditsButtonInTheSelector() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, true);
+
+        assertTrue(aDialog.mDisclaimerButton.mVisible, "the selector options show the disclaimer");
+        assertEquals(aDialog.mBackToMainButton.mX, aDialog.mDisclaimerButton.mX, "same column");
+        assertEquals(aDialog.mBackToMainButton.mY - NewOptionsDialog.OPTIONS_BUTTON_SPACING_Y,
+                aDialog.mDisclaimerButton.mY, "one button slot above the credits button");
+        assertEquals(NewOptionsDialog.OPTIONS_BUTTON_WIDTH, aDialog.mDisclaimerButton.mWidth);
+        assertEquals(NewOptionsDialog.OPTIONS_BUTTON_HEIGHT, aDialog.mDisclaimerButton.mHeight);
+    }
+
+    /** The disclaimer is a main-menu feature; the in-level pause dialog keeps the restart slot. */
+    @Test
+    void disclaimerButtonIsHiddenInLevel() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, false);
+
+        assertFalse(aDialog.mDisclaimerButton.mVisible);
+    }
+
+    /** The label, the popup title and the popup's OK button all resolve the DISCLAIMER key, with
+     * the English default when the table does not bank it (other retail distributions). */
+    @Test
+    void disclaimerTextsResolveTheDisclaimerKeyWithAnEnglishDefault() {
+        LawnApp app = newApp();
+        app.mStringProperties.put("DISCLAIMER", "免责声明");
+        NewOptionsDialog aDialog = newDialog(app, true);
+        assertEquals("免责声明", aDialog.mDisclaimerButton.mLabel, "the LawnStrings entry wins");
+
+        // The label resolves at construction time, so the default needs a fresh dialog.
+        app.mStringProperties.remove("DISCLAIMER");
+        NewOptionsDialog aDefaultDialog = newDialog(app, true);
+        assertEquals("Disclaimer", aDefaultDialog.mDisclaimerButton.mLabel, "the English default");
+    }
+
+    /** Pressing the button opens the standard LawnDialog popup: DISCLAIMER title, the policy
+     * paragraph body, and the standard OK confirmation button. */
+    @Test
+    void disclaimerButtonOpensThePolicyPopupWithAnOkButton() {
+        LawnApp app = newApp();
+        app.mStringProperties.put("DISCLAIMER", "免责声明");
+        app.mStringProperties.put("DIALOG_BUTTON_OK", "确定");
+        NewOptionsDialog aDialog = newDialog(app, true);
+
+        aDialog.buttonDepress(NewOptionsDialog.NewOptionsDialog_Disclaimer);
+
+        LawnDialog aPopup = (LawnDialog) app.getDialog(Dialogs.DIALOG_INFO);
+        assertTrue(aPopup != null, "the popup must be open");
+        assertEquals("免责声明", aPopup.mDialogHeader, "the title carries the DISCLAIMER text");
+        assertEquals(NewOptionsDialog.DISCLAIMER_TEXT, aPopup.mDialogLines, "the body is the policy text");
+        assertTrue(aPopup.mLawnYesButton != null, "BUTTONS_FOOTER provides the OK button");
+        assertEquals("确定", aPopup.mLawnYesButton.mLabel, "the button is the standard OK confirmation");
+    }
+
+    /** The body keeps the disclaimer's three sentences, arranged as policy paragraphs. */
+    @Test
+    void disclaimerTextIsThreePolicyParagraphs() {
+        String[] aParagraphs = NewOptionsDialog.DISCLAIMER_TEXT.split("\n\n");
+        assertEquals(3, aParagraphs.length, "three paragraphs");
+        assertTrue(aParagraphs[0].startsWith("This is an unofficial Mod"), "permitted under the policy");
+        assertTrue(aParagraphs[1].startsWith("Plant vs. Zombies game materials"), "EA owns the materials");
+        assertTrue(aParagraphs[2].startsWith("Electronic Arts and PopCap have not endorsed"),
+                "no endorsement");
+    }
+
+    @Test
+    void musicSliderValueIsStoredVerbatim() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, false);
+
+        aDialog.sliderVal(NewOptionsDialog.NewOptionsDialog_MusicVolume, 0.42);
+
+        assertEquals(0.42, app.getMusicVolume(), 1.0E-12, "NewOptionsDialog.cpp:203-215");
+    }
+
+    @Test
+    void sfxSliderValueMapsToVolumeTimesPointSixFive() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, false);
+
+        aDialog.sliderVal(NewOptionsDialog.NewOptionsDialog_SoundVolume, 0.5);
+
+        assertEquals(0.325, app.getSfxVolume(), 1.0E-12, "0.5 * 0.65 (NewOptionsDialog.cpp:214)");
+    }
+
+    @Test
+    void buttonIdConstantsMatchUpstreamEnum() {
+        assertEquals(0, NewOptionsDialog.NewOptionsDialog_Almanac);
+        assertEquals(1, NewOptionsDialog.NewOptionsDialog_MainMenu);
+        assertEquals(2, NewOptionsDialog.NewOptionsDialog_Restart);
+        assertEquals(3, NewOptionsDialog.NewOptionsDialog_Update);
+        assertEquals(4, NewOptionsDialog.NewOptionsDialog_MusicVolume);
+        assertEquals(5, NewOptionsDialog.NewOptionsDialog_SoundVolume);
+        assertEquals(6, NewOptionsDialog.NewOptionsDialog_Fullscreen);
+        assertEquals(7, NewOptionsDialog.NewOptionsDialog_HardwareAcceleration);
+        // A port addition beyond the upstream enum.
+        assertEquals(8, NewOptionsDialog.NewOptionsDialog_AutoPause);
+        assertEquals(9, NewOptionsDialog.NewOptionsDialog_DebugInfo);
+        assertEquals(10, NewOptionsDialog.NewOptionsDialog_Disclaimer);
+    }
+
+    /** The debug-overlay checkbox sits in the left column, vertically aligned with the fullscreen row. */
+    @Test
+    void debugInfoCheckboxAlignsWithTheFullscreenRow() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, false);
+
+        assertEquals(NewOptionsDialog.DEBUG_INFO_CHECKBOX_X, aDialog.mDebugInfoCheckbox.mX);
+        assertEquals(aDialog.mAutoPauseCheckbox.mX, aDialog.mDebugInfoCheckbox.mX, "same column");
+        assertEquals(aDialog.mFullscreenCheckbox.mY, aDialog.mDebugInfoCheckbox.mY,
+                "same row as the fullscreen checkbox");
+    }
+
+    /** The debug-overlay checkbox shows the current flag and applies toggles immediately. */
+    @Test
+    void debugInfoCheckboxAppliesImmediately() {
+        LawnApp app = newApp();
+        app.mShowFPS = false;
+        NewOptionsDialog aDialog = newDialog(app, false);
+        assertFalse(aDialog.mDebugInfoCheckbox.isChecked());
+
+        aDialog.checkboxChecked(NewOptionsDialog.NewOptionsDialog_DebugInfo, true);
+        assertTrue(app.mShowFPS, "toggling applies at once");
+
+        aDialog.checkboxChecked(NewOptionsDialog.NewOptionsDialog_DebugInfo, false);
+        assertFalse(app.mShowFPS);
+    }
+
+    /** The auto-pause checkbox sits in the left column of the 3D-acceleration row, its label drawn
+     * to its left with the same checkbox/label gap the right column uses. */
+    @Test
+    void autoPauseCheckboxSitsLeftOfTheVSyncCheckbox() {
+        LawnApp app = newApp();
+        NewOptionsDialog aDialog = newDialog(app, false);
+
+        assertEquals(NewOptionsDialog.AUTO_PAUSE_CHECKBOX_X, aDialog.mAutoPauseCheckbox.mX);
+        assertEquals(aDialog.mVSyncCheckbox.mY, aDialog.mAutoPauseCheckbox.mY,
+                "same row as the vsync checkbox");
+        assertTrue(aDialog.mAutoPauseCheckbox.mX + aDialog.mAutoPauseCheckbox.mWidth
+                        <= aDialog.mVSyncCheckbox.mX,
+                "left of the vsync checkbox");
+        // The right column's four-glyph labels measure 48-64px in the real font and right-align at
+        // 274 (the widest, 全屏显示, starts at 210): the left column was pulled 20px left to clear
+        // them with an 8px gap.
+        assertTrue(aDialog.mAutoPauseCheckbox.mX + aDialog.mAutoPauseCheckbox.mWidth <= 210,
+                "room for the four-glyph right-column labels between the columns");
+        assertEquals(NewOptionsDialog.AUTO_PAUSE_CHECKBOX_X - 9, NewOptionsDialog.AUTO_PAUSE_LABEL_X,
+                "the label anchors 9px left of the checkbox, mirroring the right column's 294/285 gap");
+    }
+
+    /** The checkbox reflects the app preference on open and applies toggles immediately. */
+    @Test
+    void autoPauseCheckboxAppliesImmediately() {
+        LawnApp app = newApp();
+        app.mAutoPause = true;
+        NewOptionsDialog aDialog = newDialog(app, false);
+        assertTrue(aDialog.mAutoPauseCheckbox.isChecked(), "the checkbox shows the current preference");
+
+        aDialog.checkboxChecked(NewOptionsDialog.NewOptionsDialog_AutoPause, false);
+        assertFalse(app.mAutoPause, "untoggling applies at once");
+
+        aDialog.checkboxChecked(NewOptionsDialog.NewOptionsDialog_AutoPause, true);
+        assertTrue(app.mAutoPause, "retoggling applies at once");
+    }
+
+    /** The vsync checkbox reflects the registry-backed mWaitForVSync and applies the toggle at
+     * once (the live renderer's SDL_SetRenderVSync via SexyAppBase.applyWaitForVSync). */
+    @Test
+    void vsyncCheckboxAppliesImmediately() {
+        LawnApp app = newApp();
+        app.mWaitForVSync = true;
+        NewOptionsDialog aDialog = newDialog(app, false);
+        assertTrue(aDialog.mVSyncCheckbox.isChecked(), "the checkbox shows the current preference");
+
+        aDialog.checkboxChecked(NewOptionsDialog.NewOptionsDialog_VSync, false);
+        assertFalse(app.mWaitForVSync, "unchecking applies at once");
+
+        aDialog.checkboxChecked(NewOptionsDialog.NewOptionsDialog_VSync, true);
+        assertTrue(app.mWaitForVSync, "re-checking applies at once");
+    }
+
+    /** PORT-NOTE deviation: the fullscreen checkbox switches the screen mode on every check/uncheck
+     * instead of waiting for the dialog to close (upstream applies it in KillNewOptionsDialog),
+     * and the dialog stays open afterwards. The headless app has no window, so the test installs a
+     * stub platform backend and marks the app initialised - the same way LawnAppTest does - for
+     * switchScreenMode's setFullscreen branch. */
+    @Test
+    void fullscreenCheckboxAppliesImmediately() {
+        LawnApp app = newApp();
+        app.mPlatformBackend = io.github.pvzjre.portable.lawn.LawnAppTest.newFakePlatformBackend();
+        app.mInitialized = true;
+        boolean aStartWindowed = app.mIsWindowed;
+        NewOptionsDialog aDialog = newDialog(app, false);
+        assertEquals(aStartWindowed, !aDialog.mFullscreenCheckbox.isChecked(),
+                "the checkbox shows the current window mode");
+
+        aDialog.checkboxChecked(NewOptionsDialog.NewOptionsDialog_Fullscreen, true);
+        assertFalse(app.mIsWindowed, "checking fullscreen applies at once");
+        assertEquals(aDialog, app.getDialog(Dialogs.DIALOG_NEWOPTIONS), "the dialog stays open");
+        assertEquals(!app.mIsWindowed, aDialog.mFullscreenCheckbox.isChecked(),
+                "the checkbox stays in sync with the applied mode");
+
+        aDialog.checkboxChecked(NewOptionsDialog.NewOptionsDialog_Fullscreen, false);
+        assertTrue(app.mIsWindowed, "unchecking fullscreen applies at once");
+        assertEquals(!app.mIsWindowed, aDialog.mFullscreenCheckbox.isChecked(),
+                "the checkbox stays in sync with the applied mode");
+        assertEquals(aStartWindowed, app.mIsWindowed, "the start mode is restored");
+    }
+}

@@ -1,0 +1,161 @@
+package io.github.pvzjre.portable.lawn;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Optional;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
+import io.github.pvzjre.portable.pvzp.TestAssets;
+
+/**
+ * Real-asset integration checks for the screens that register their own delay-load resource groups and
+ * for the screen-mode switch.
+ *
+ * <p>Four screens ({@code AwardScreen}, {@code AlmanacDialog}, {@code StoreScreen},
+ * {@code ChallengeScreen}) built the group list but never loaded it, so every image they draw was null -
+ * the main menu's Help button (an award screen showing the zombie note) crashed with an NPE. The check
+ * below is generic: after the screen is constructed, every image of every group it registered must be
+ * bound.
+ */
+class ScreenResourceLoadingTest {
+
+    /** Boots the real game once (asset-gated like {@code GameBootSmokeTest}). Package-visible: the
+     * other real-asset tests ({@code ZombieTest}) need the same fully loaded app. */
+    static LawnApp boot(Path saveDir, Path resourceRoot) throws IOException, InterruptedException {
+        // The entry point installs the resource extractor (upstream main.cpp); without it a group load
+        // marks the group loaded but binds nothing, which is what made every delay-load screen draw null.
+        Main.installHooks();
+        LawnApp app = new LawnApp();
+        LawnApp.gLawnApp = app;
+        app.setArgs(new String[] {
+            "pvz-portable", "-resdir", resourceRoot.toString(), "-savedir", saveDir.toString(),
+        });
+        app.init();
+        app.startLoadingThread();
+        long deadline = System.nanoTime() + 180_000_000_000L;
+        while (!app.mLoadingThreadCompleted.get() && System.nanoTime() < deadline) {
+            app.updateFrames();
+            Thread.sleep(2);
+        }
+        assertTrue(app.mLoadingThreadCompleted.get(), "resource loading must complete");
+        app.mPlayerInfo = app.mProfileMgr.addProfile("Screens");
+        return app;
+    }
+
+    /**
+     * Paints the screen into an offscreen image. The reported help crash was an NPE raised while drawing
+     * the images the screen never loaded, so drawing is the check that actually covers it.
+     *
+     * <p>That the draw really painted is asserted on the target's own CPU pixels. The target is a plain
+     * {@code MemoryImage}, so its {@code getBits()} is its own buffer and the images the screen blits
+     * into it are read through their CPU bits - no GPU read-back takes part, and in particular not
+     * {@code GLImage.getBits()}'s texture read-back (the one that reads another target's pixels for a
+     * static texture; see {@code SdlRenderer#readTexturePixels} and ../verification/VERIFICATION.md §62.5
+     * deviation 3 / §64). A test whose only witness is that read-back would be checking the wrong
+     * surface, which is why this one must not depend on it.
+     */
+    private static void assertPaints(String theScreen, io.github.pvzjre.portable.sexy.Widget theWidget) {
+        var aTarget = new io.github.pvzjre.portable.sexy.graphics.MemoryImage(null);
+        aTarget.create(800, 600);
+        theWidget.resize(0, 0, 800, 600);
+        theWidget.draw(new io.github.pvzjre.portable.sexy.graphics.Graphics(aTarget));
+
+        int aPainted = 0;
+        int[] aPixels = aTarget.getBits();
+        for (int aPixel = 0; aPixel < 800 * 600; aPixel++) {
+            if ((aPixels[aPixel] >>> 24) != 0) {
+                aPainted++;
+            }
+        }
+        assertTrue(aPainted > 0, theScreen + " must paint opaque pixels into its target, painted: " + aPainted);
+    }
+
+    private static void assertGroupsBound(String theScreen, Iterable<String> theGroups) {
+        for (String aGroup : theGroups) {
+            int aUnbound = 0;
+            String aFirst = null;
+            for (Resources.ResourceEntry anEntry : Resources.ENTRIES) {
+                if (anEntry.type() == Resources.ResourceType.IMAGE && aGroup.equals(anEntry.group())) {
+                    if (Resources.getImageById(anEntry.id()) == null) {
+                        aUnbound++;
+                        if (aFirst == null) {
+                            aFirst = anEntry.name();
+                        }
+                    }
+                }
+            }
+            org.junit.jupiter.api.Assertions.assertEquals(0, aUnbound,
+                    theScreen + " left " + aUnbound + " images of " + aGroup + " unbound (e.g. " + aFirst
+                            + "): the screen registers that group but never loads it");
+        }
+    }
+
+    @Test
+    void screensLoadTheGroupsTheyRegister(@org.junit.jupiter.api.io.TempDir Path tmp)
+            throws IOException, InterruptedException {
+        Optional<Path> resourceRoot = TestAssets.resourceRoot();
+        Assumptions.assumeTrue(resourceRoot.isPresent(), "no real PvZ assets available");
+
+        LawnApp app = boot(Files.createDirectories(tmp.resolve("userdata")), resourceRoot.get());
+        try {
+            // Help on the main menu: the award screen showing the zombie note.
+
+
+            var anAward = new io.github.pvzjre.portable.lawn.widget.AwardScreen(app,
+                    io.github.pvzjre.portable.lawn.AwardType.AWARD_HELP_ZOMBIENOTE, false);
+            assertGroupsBound("AwardScreen(Help)", anAward.mLoadedResourceNames);
+            assertPaints("AwardScreen(Help)", anAward);
+
+            app.mGameScene = GameScenes.SCENE_AWARD;
+
+            var anAlmanac = new io.github.pvzjre.portable.lawn.widget.AlmanacDialog(app);
+            assertGroupsBound("AlmanacDialog", anAlmanac.mLoadedResourceNames);
+            assertPaints("AlmanacDialog", anAlmanac);
+
+            var aStore = new io.github.pvzjre.portable.lawn.widget.StoreScreen(app);
+            assertGroupsBound("StoreScreen", aStore.mLoadedResourceNames);
+            assertPaints("StoreScreen", aStore);
+
+            var aChallenge = new io.github.pvzjre.portable.lawn.widget.ChallengeScreen(app, ChallengePage.CHALLENGE_PAGE_SURVIVAL);
+            assertGroupsBound("ChallengeScreen", aChallenge.mLoadedResourceNames);
+            assertPaints("ChallengeScreen", aChallenge);
+        } finally {
+            app.shutdown();
+            LawnApp.gLawnApp = null;
+        }
+    }
+
+    /**
+     * Toggling fullscreen must switch the existing window: re-initialising the platform threw
+     * "platform already initialized" as soon as fullscreen was turned off again.
+     */
+    @Test
+    void screenModeSwitchDoesNotReinitialiseThePlatform(@org.junit.jupiter.api.io.TempDir Path tmp)
+            throws IOException, InterruptedException {
+        Optional<Path> resourceRoot = TestAssets.resourceRoot();
+        Assumptions.assumeTrue(resourceRoot.isPresent(), "no real PvZ assets available");
+
+        LawnApp app = boot(Files.createDirectories(tmp.resolve("userdata")), resourceRoot.get());
+        try {
+            // The initial mode comes from the persisted ScreenMode preference, so only the round trip is checked.
+            boolean wasWindowed = app.mIsWindowed;
+            assertNotNull(app.mPlatformBackend, "a platform backend must exist");
+
+            app.switchScreenMode(!wasWindowed); // switch away from the initial mode
+            assertNotEquals(wasWindowed, app.mIsWindowed);
+            app.switchScreenMode(wasWindowed); // back: this used to throw "platform already initialized"
+            assertEquals(wasWindowed, app.mIsWindowed);
+            app.switchScreenMode(!wasWindowed);
+            app.switchScreenMode(wasWindowed);
+        } finally {
+            app.shutdown();
+            LawnApp.gLawnApp = null;
+        }
+    }
+}

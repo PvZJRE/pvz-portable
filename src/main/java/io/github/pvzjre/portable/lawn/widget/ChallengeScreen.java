@@ -1,0 +1,1031 @@
+/*
+ * Ported from src/Lawn/Widget/ChallengeScreen.h:26-105 and src/Lawn/Widget/ChallengeScreen.cpp:20-771.
+ */
+package io.github.pvzjre.portable.lawn.widget;
+
+import io.github.pvzjre.portable.lawn.ChallengePage;
+import io.github.pvzjre.portable.lawn.DrawStringJustification;
+import io.github.pvzjre.portable.lawn.GameMode;
+import io.github.pvzjre.portable.lawn.GameScenes;
+import io.github.pvzjre.portable.lawn.LawnApp;
+import io.github.pvzjre.portable.lawn.MusicTune;
+import java.io.IOException;
+
+import io.github.pvzjre.portable.lawn.PvzpCurves;
+import io.github.pvzjre.portable.lawn.Resources;
+import io.github.pvzjre.portable.lawn.ToolTipWidget;
+import io.github.pvzjre.portable.lawn.UnlockingState;
+import io.github.pvzjre.portable.pvzp.PvzpCommon;
+import io.github.pvzjre.portable.pvzp.PvzpStringFile;
+import io.github.pvzjre.portable.pvzp.fx.FoleyType;
+import io.github.pvzjre.portable.sexy.ButtonListener;
+import io.github.pvzjre.portable.sexy.ButtonWidget;
+import io.github.pvzjre.portable.sexy.Color;
+import io.github.pvzjre.portable.sexy.Common;
+import io.github.pvzjre.portable.sexy.KeyCode;
+import io.github.pvzjre.portable.sexy.Rect;
+import io.github.pvzjre.portable.sexy.Widget;
+import io.github.pvzjre.portable.sexy.WidgetManager;
+import io.github.pvzjre.portable.sexy.graphics.Font;
+import io.github.pvzjre.portable.sexy.graphics.Graphics;
+import io.github.pvzjre.portable.sexy.graphics.MemoryImage;
+import io.github.pvzjre.portable.sexy.graphics.Image;
+
+/**
+ * Ported from src/Lawn/Widget/ChallengeScreen.h:26-105 and src/Lawn/Widget/ChallengeScreen.cpp:20-771.
+ *
+ * <p>The mini-game / puzzle / survival picker: one page of 104x115 thumbnails at a time, four page
+ * buttons (cheat-key gated), a back button and a tooltip for locked entries. The 72-entry
+ * {@link #gChallengeDefs} table is index-aligned to {@code GameMode - GAMEMODE_SURVIVAL_NORMAL_STAGE_1}
+ * (ChallengeScreen.cpp:39-112, {@code GetChallengeDefinition} at :216-222), so button id
+ * {@code 200 + i} opens {@code GameMode(i + 1)}.
+ *
+ * <p>Every entry's enablement follows upstream's trophy/accomplishment lock rules through
+ * {@link #isEntryEnabled(int, int)}; selecting any entry starts its mode.
+ */
+public class ChallengeScreen extends Widget implements ButtonListener {
+
+    /** Ported from src/Lawn/Widget/ChallengeScreen.h:32 (`NUM_CHALLENGE_MODES = NUM_GAME_MODES - 1`). */
+    public static final int NUM_CHALLENGE_MODES = GameMode.NUM_GAME_MODES - 1;
+
+    // ChallengeScreen.h:34-38 (button-id enum)
+    public static final int ChallengeScreen_Back = 100;
+    public static final int ChallengeScreen_Mode = 200;
+    public static final int ChallengeScreen_Page = 300;
+
+    // ChallengeScreen.cpp:160-176 (thumbnail / page button geometry)
+    public static final int CHALLENGE_BUTTON_WIDTH = 104;
+    public static final int CHALLENGE_BUTTON_HEIGHT = 115;
+    public static final int CHALLENGE_BUTTON_X = 38;
+    public static final int CHALLENGE_BUTTON_COL_PITCH = 155;
+    /** Survival page row layout: `125 + row * 145` (ChallengeScreen.cpp:170). */
+    public static final int CHALLENGE_BUTTON_SURVIVAL_Y = 125;
+    public static final int CHALLENGE_BUTTON_SURVIVAL_ROW_PITCH = 145;
+    /** Mini-game / limbo / puzzle row layout: `93 + row * 119` (ChallengeScreen.cpp:168). */
+    public static final int CHALLENGE_BUTTON_OTHER_Y = 93;
+    public static final int CHALLENGE_BUTTON_OTHER_ROW_PITCH = 119;
+
+    /**
+     * Port addition: the limbo page's own grid — six 104px thumbnails per row centered on the
+     * screen (x = 48, pitch 120), two playable rows plus a separated third row for the four
+     * showcase entries (380 clears row 1 visibly: 212 + 115 = 327, a 53px gap).
+     */
+    public static final int CHALLENGE_BUTTON_LIMBO_X = 48;
+    public static final int CHALLENGE_BUTTON_LIMBO_SHOWCASE_X = 104;
+    public static final int CHALLENGE_BUTTON_LIMBO_SHOWCASE_COL_PITCH = 128;
+    public static final int CHALLENGE_BUTTON_LIMBO_COL_PITCH = 120;
+    public static final int CHALLENGE_BUTTON_LIMBO_SHOWCASE_Y = 380;
+    /** Port addition: the squirrel tech demo shares upstream cell (2,3) with intro and stays off
+     * the re-laid-out page (the user's 12 + 4 layout counts the 16 entries visible in retail). */
+    public static final int CHALLENGE_LIMBO_HIDDEN_MODE = GameMode.GAMEMODE_CHALLENGE_SQUIRREL;
+    // ChallengeScreen.cpp:141-158 (page buttons)
+    public static final int CHALLENGE_PAGE_BUTTON_X = 200;
+    public static final int CHALLENGE_PAGE_BUTTON_PITCH = 100;
+    public static final int CHALLENGE_PAGE_BUTTON_Y = 568;
+    public static final int CHALLENGE_PAGE_BUTTON_WIDTH = 100;
+    public static final int CHALLENGE_PAGE_BUTTON_HEIGHT = 26;
+
+    /** The shared frame behind the switcher labels: one button image scaled around both of them. */
+    public static final int CHALLENGE_PAGE_FRAME_X = 295;
+    public static final int CHALLENGE_PAGE_FRAME_Y = 568;
+    public static final int CHALLENGE_PAGE_FRAME_WIDTH = 210;
+    public static final int CHALLENGE_PAGE_FRAME_HEIGHT = 26;
+    // ChallengeScreen.cpp:129-139 (back button)
+    public static final int CHALLENGE_BACK_BUTTON_X = 18;
+    public static final int CHALLENGE_BACK_BUTTON_Y = 568;
+    public static final int CHALLENGE_BACK_BUTTON_WIDTH = 111;
+    public static final int CHALLENGE_BACK_BUTTON_HEIGHT = 26;
+
+    /** Ported from src/Lawn/Widget/ChallengeScreen.cpp:39-112 (`gChallengeDefs`). */
+    public static final ChallengeDefinition[] gChallengeDefs = {
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_NORMAL_STAGE_1, 0, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 0, 0, "[SURVIVAL_DAY_NORMAL]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_NORMAL_STAGE_2, 1, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 0, 1, "[SURVIVAL_NIGHT_NORMAL]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_NORMAL_STAGE_3, 2, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 0, 2, "[SURVIVAL_POOL_NORMAL]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_NORMAL_STAGE_4, 3, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 0, 3, "[SURVIVAL_FOG_NORMAL]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_NORMAL_STAGE_5, 4, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 0, 4, "[SURVIVAL_ROOF_NORMAL]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_HARD_STAGE_1, 5, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 1, 0, "[SURVIVAL_DAY_HARD]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_HARD_STAGE_2, 6, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 1, 1, "[SURVIVAL_NIGHT_HARD]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_HARD_STAGE_3, 7, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 1, 2, "[SURVIVAL_POOL_HARD]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_HARD_STAGE_4, 8, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 1, 3, "[SURVIVAL_FOG_HARD]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_HARD_STAGE_5, 9, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 1, 4, "[SURVIVAL_ROOF_HARD]"),
+        // PORT-NOTE (deviation): upstream banks these four endless variants on the limbo page
+        // (row 3, :50-54); the hidden-content enablement surfaces them on the Survival page's
+        // endless row around the pool endless entry retail already shows.
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_ENDLESS_STAGE_1, 0, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 2, 0, "[SURVIVAL_DAY_ENDLESS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_ENDLESS_STAGE_2, 1, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 2, 1, "[SURVIVAL_NIGHT_ENDLESS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_ENDLESS_STAGE_3, 10, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 2, 2, "[SURVIVAL_POOL_ENDLESS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_ENDLESS_STAGE_4, 3, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 2, 3, "[SURVIVAL_FOG_ENDLESS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SURVIVAL_ENDLESS_STAGE_5, 4, ChallengePage.CHALLENGE_PAGE_SURVIVAL, 2, 4, "[SURVIVAL_ROOF_ENDLESS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_WAR_AND_PEAS, 0, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 0, 0, "[WAR_AND_PEAS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_WALLNUT_BOWLING, 6, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 0, 1, "[WALL_NUT_BOWLING]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_SLOT_MACHINE, 2, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 0, 2, "[SLOT_MACHINE]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_RAINING_SEEDS, 3, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 0, 3, "[ITS_RAINING_SEEDS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_BEGHOULED, 1, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 0, 4, "[BEGHOULED]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_INVISIGHOUL, 8, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 1, 0, "[INVISIGHOUL]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_SEEING_STARS, 5, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 1, 1, "[SEEING_STARS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_ZOMBIQUARIUM, 7, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 1, 2, "[ZOMBIQUARIUM]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_BEGHOULED_TWIST, 20, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 1, 3, "[BEGHOULED_TWIST]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_LITTLE_TROUBLE, 12, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 1, 4, "[LITTLE_TROUBLE]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_PORTAL_COMBAT, 15, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 2, 0, "[PORTAL_COMBAT]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_COLUMN, 4, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 2, 1, "[COLUMN_AS_YOU_SEE_EM]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_BOBSLED_BONANZA, 17, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 2, 2, "[BOBSLED_BONANZA]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_SPEED, 18, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 2, 3, "[ZOMBIES_ON_SPEED]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_WHACK_A_ZOMBIE, 16, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 2, 4, "[WHACK_A_ZOMBIE]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_LAST_STAND, 21, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 3, 0, "[LAST_STAND]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_WAR_AND_PEAS_2, 0, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 3, 1, "[WAR_AND_PEAS_2]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_WALLNUT_BOWLING_2, 6, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 3, 2, "[WALL_NUT_BOWLING_EXTREME]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_POGO_PARTY, 14, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 3, 3, "[POGO_PARTY]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_FINAL_BOSS, 19, ChallengePage.CHALLENGE_PAGE_CHALLENGE, 3, 4, "[FINAL_BOSS]"),
+        // PORT-NOTE (deviation): the limbo page is re-laid-out at the user's request — the 12
+        // playable entries fill two 6-column rows (rows 0-1), and the four showcase entries (zen
+        // garden / tree of wisdom / upsell / intro) sit centered on a separated row below (row 2,
+        // cols 1-4 of the 6-column grid). Upstream packs all 17 entries into 5-column rows
+        // (:75-89); the squirrel tech demo (upstream cell (2,3), sharing intro's cell and never
+        // visible in retail) stays off the page — see updateButtons. Rows stay in GameMode order
+        // (the table is index-aligned: gChallengeDefs[i] opens GameMode i+1).
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_ART_CHALLENGE_WALLNUT, 0, ChallengePage.CHALLENGE_PAGE_LIMBO, 0, 0, "[ART_CHALLENGE_WALL_NUT]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_SUNNY_DAY, 1, ChallengePage.CHALLENGE_PAGE_LIMBO, 0, 1, "[SUNNY_DAY]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_RESODDED, 2, ChallengePage.CHALLENGE_PAGE_LIMBO, 0, 2, "[UNSODDED]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_BIG_TIME, 3, ChallengePage.CHALLENGE_PAGE_LIMBO, 0, 3, "[BIG_TIME]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_ART_CHALLENGE_SUNFLOWER, 4, ChallengePage.CHALLENGE_PAGE_LIMBO, 0, 4, "[ART_CHALLENGE_SUNFLOWER]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_AIR_RAID, 5, ChallengePage.CHALLENGE_PAGE_LIMBO, 0, 5, "[AIR_RAID]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_ICE, 6, ChallengePage.CHALLENGE_PAGE_LIMBO, 2, 4, "[ICE_LEVEL]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_ZEN_GARDEN, 7, ChallengePage.CHALLENGE_PAGE_LIMBO, 2, 0, "[ZEN_GARDEN]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_HIGH_GRAVITY, 8, ChallengePage.CHALLENGE_PAGE_LIMBO, 1, 1, "[HIGH_GRAVITY]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_GRAVE_DANGER, 11, ChallengePage.CHALLENGE_PAGE_LIMBO, 1, 2, "[GRAVE_DANGER]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_SHOVEL, 10, ChallengePage.CHALLENGE_PAGE_LIMBO, 1, 3, "[CAN_YOU_DIG_IT]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_STORMY_NIGHT, 13, ChallengePage.CHALLENGE_PAGE_LIMBO, 1, 4, "[DARK_STORMY_NIGHT]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_BUNGEE_BLITZ, 9, ChallengePage.CHALLENGE_PAGE_LIMBO, 1, 5, "[BUNGEE_BLITZ]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_CHALLENGE_SQUIRREL, 10, ChallengePage.CHALLENGE_PAGE_LIMBO, 1, 0, "Squirrel"),
+        new ChallengeDefinition(GameMode.GAMEMODE_TREE_OF_WISDOM, 10, ChallengePage.CHALLENGE_PAGE_LIMBO, 2, 1, "Tree of Wisdom"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_1, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 0, 0, "[SCARY_POTTER_1]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_2, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 0, 1, "[SCARY_POTTER_2]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_3, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 0, 2, "[SCARY_POTTER_3]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_4, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 0, 3, "[SCARY_POTTER_4]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_5, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 0, 4, "[SCARY_POTTER_5]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_6, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 1, 0, "[SCARY_POTTER_6]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_7, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 1, 1, "[SCARY_POTTER_7]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_8, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 1, 2, "[SCARY_POTTER_8]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_9, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 1, 3, "[SCARY_POTTER_9]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_SCARY_POTTER_ENDLESS, 10, ChallengePage.CHALLENGE_PAGE_PUZZLE, 1, 4, "[SCARY_POTTER_ENDLESS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_1, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 2, 0, "[I_ZOMBIE_1]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_2, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 2, 1, "[I_ZOMBIE_2]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_3, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 2, 2, "[I_ZOMBIE_3]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_4, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 2, 3, "[I_ZOMBIE_4]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_5, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 2, 4, "[I_ZOMBIE_5]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_6, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 3, 0, "[I_ZOMBIE_6]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_7, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 3, 1, "[I_ZOMBIE_7]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_8, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 3, 2, "[I_ZOMBIE_8]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_9, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 3, 3, "[I_ZOMBIE_9]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_ENDLESS, 11, ChallengePage.CHALLENGE_PAGE_PUZZLE, 3, 4, "[I_ZOMBIE_ENDLESS]"),
+        new ChallengeDefinition(GameMode.GAMEMODE_UPSELL, 10, ChallengePage.CHALLENGE_PAGE_LIMBO, 2, 2, "Upsell"),
+        new ChallengeDefinition(GameMode.GAMEMODE_INTRO, 10, ChallengePage.CHALLENGE_PAGE_LIMBO, 2, 3, "Intro"),
+    };
+
+    // ChallengeScreen.h:50-58
+    public NewLawnButton mBackButton;
+    public ButtonWidget[] mPageButton = new ButtonWidget[ChallengePage.MAX_CHALLANGE_PAGES];
+
+    // PORT-NOTE (deviation): the four added endless variants read optional pak images
+    // (IMAGE_ENDLESS_*) or loose files (<gameDir>/images/ad/endless_*.jpg) as their covers - the
+    // thumbnail sheet has only one endless cel (pool). Lazy-loaded once per screen instance.
+    private Image[] mEndlessCovers;
+    private boolean mEndlessCoversLoaded;
+
+    /**
+     * The per-cover lookup candidates: pak resource names (the resources.xml id, in the convention
+     * a repack would use) then the loose-file path under the resource folder.
+     */
+    private static final String[][] ENDLESS_COVER_RESOURCES = {
+        {"IMAGE_ENDLESS_DAY", "ENDLESS_DAY", "images/endless_day.jpg", "endless_day.jpg"},
+        {"IMAGE_ENDLESS_NIGHT", "ENDLESS_NIGHT", "images/endless_night.jpg", "endless_night.jpg"},
+        {"IMAGE_ENDLESS_FOG", "ENDLESS_FOG", "images/endless_fog.jpg", "endless_fog.jpg"},
+        {"IMAGE_ENDLESS_ROOF", "ENDLESS_ROOF", "images/endless_roof.jpg", "endless_roof.jpg"},
+    };
+
+    /** The endless-variant index into {@link #mEndlessCovers}, -1 for the other modes. */
+    private static int endlessCoverIndex(int theChallengeMode) {
+        switch (theChallengeMode) {
+            case GameMode.GAMEMODE_SURVIVAL_ENDLESS_STAGE_1:
+                return 0;
+            case GameMode.GAMEMODE_SURVIVAL_ENDLESS_STAGE_2:
+                return 1;
+            case GameMode.GAMEMODE_SURVIVAL_ENDLESS_STAGE_4:
+                return 2;
+            case GameMode.GAMEMODE_SURVIVAL_ENDLESS_STAGE_5:
+                return 3;
+            default:
+                return -1;
+        }
+    }
+
+    /**
+     * Lazy-loads the four endless covers: a pak image under any of the candidate names, or a loose
+     * file at {@code <resourceFolder>/images/ad/endless_*.jpg} - whichever exists. Missing covers
+     * stay null and the button falls back to the thumbnail sheet.
+     */
+    private void loadEndlessCovers() {
+        mEndlessCoversLoaded = true;
+        mEndlessCovers = new Image[4];
+        for (int i = 0; i < 4; i++) {
+            for (String aName : ENDLESS_COVER_RESOURCES[i]) {
+                try {
+                    Image anImage = mApp.mResourceManager.getImageThrow(aName).get();
+                    if (anImage != null) {
+                        mEndlessCovers[i] = anImage;
+                        break;
+                    }
+                } catch (RuntimeException ignored) {
+                    // the pak doesn't carry this cover under that name
+                }
+            }
+            if (mEndlessCovers[i] != null) {
+                continue;
+            }
+            try {
+                java.awt.image.BufferedImage anImage = javax.imageio.ImageIO.read(
+                        new java.io.File(Common.getResourcePath(ENDLESS_COVER_RESOURCES[i][1])));
+                if (anImage != null) {
+                    MemoryImage aMemoryImage = new MemoryImage();
+                    aMemoryImage.setBits(anImage.getRGB(0, 0, anImage.getWidth(), anImage.getHeight(),
+                            null, 0, anImage.getWidth()), anImage.getWidth(), anImage.getHeight(), true);
+                    mEndlessCovers[i] = aMemoryImage;
+                }
+            } catch (IOException | RuntimeException ignored) {
+                // no loose file either - the sheet cel remains the fallback
+            }
+        }
+    }
+    public ButtonWidget[] mChallengeButtons = new ButtonWidget[NUM_CHALLENGE_MODES];
+    public LawnApp mApp;
+    public ToolTipWidget mToolTip;
+    public int mPageIndex;
+    public boolean mCheatEnableChallenges;
+    public int mUnlockState;
+    public int mUnlockStateCounter;
+    public int mUnlockChallengeIndex;
+    public float mLockShakeX;
+    public float mLockShakeY;
+    public boolean mLimboPageUnlocked;
+    public int mClickCount;
+    public int mLastClickUpdateCnt;
+
+    /**
+     * Ported from src/Lawn/Widget/ChallengeScreen.cpp:216-222 ({@code GetChallengeDefinition}).
+     */
+    public static ChallengeDefinition getChallengeDefinition(int theChallengeMode) {
+        return gChallengeDefs[theChallengeMode];
+    }
+
+    /**
+     * Pure enablement predicate used by the UI: an entry is enabled exactly when upstream's
+     * trophy/accomplishment lock reports no pending requirement. Mirrors upstream
+     * {@code mDisabled = MoreTrophiesNeeded(i) != 0} (ChallengeScreen.cpp:172-175).
+     */
+    public static boolean isEntryEnabled(int theDefIndex, int theMoreTrophiesNeeded) {
+        return theMoreTrophiesNeeded == 0;
+    }
+
+    /**
+     * Port addition: the limbo showcase entries — zen garden, tree of wisdom, upsell and intro
+     * are maintenance/utility modes, not winnable challenges. They never show a trophy badge and
+     * never count toward any page's trophy total (see drawButton and LawnApp.getNumTrophies).
+     */
+    public static boolean isShowcaseEntry(int theGameMode) {
+        return theGameMode == GameMode.GAMEMODE_CHALLENGE_ZEN_GARDEN
+                || theGameMode == GameMode.GAMEMODE_TREE_OF_WISDOM
+                || theGameMode == GameMode.GAMEMODE_UPSELL
+                || theGameMode == GameMode.GAMEMODE_INTRO
+                || theGameMode == GameMode.GAMEMODE_CHALLENGE_ICE;
+    }
+
+    // ChallengeScreen.cpp:160-170 (thumbnail grid position)
+    // PORT-NOTE (deviation): the page parameter and the limbo branch are a port addition — the
+    // limbo page uses its own 6-column grid (see the CHALLENGE_BUTTON_LIMBO_* constants).
+    public static int challengeButtonX(int thePage, int theCol) {
+        return challengeButtonXYCol(thePage, 1, theCol);
+    }
+
+    /** The row-aware x mapping (a port addition; the showcase row centers five entries). */
+    public static int challengeButtonXYCol(int thePage, int theRow, int theCol) {
+        if (thePage == ChallengePage.CHALLENGE_PAGE_LIMBO && theRow == 2) {
+            // the showcase row centers its five entries on its own pitch
+            return CHALLENGE_BUTTON_LIMBO_SHOWCASE_X + theCol * CHALLENGE_BUTTON_LIMBO_SHOWCASE_COL_PITCH;
+        }
+        if (thePage == ChallengePage.CHALLENGE_PAGE_LIMBO) {
+            return CHALLENGE_BUTTON_LIMBO_X + theCol * CHALLENGE_BUTTON_LIMBO_COL_PITCH;
+        }
+        return CHALLENGE_BUTTON_X + theCol * CHALLENGE_BUTTON_COL_PITCH;
+    }
+
+    // ChallengeScreen.cpp:166-170 (survival uses a taller row pitch than the other pages)
+    public static int challengeButtonY(int thePage, int theRow) {
+        if (thePage == ChallengePage.CHALLENGE_PAGE_SURVIVAL) {
+            return CHALLENGE_BUTTON_SURVIVAL_Y + theRow * CHALLENGE_BUTTON_SURVIVAL_ROW_PITCH;
+        }
+        if (thePage == ChallengePage.CHALLENGE_PAGE_LIMBO && theRow == 2) {
+            // The showcase row, separated from the playable rows above it.
+            return CHALLENGE_BUTTON_LIMBO_SHOWCASE_Y;
+        }
+        return CHALLENGE_BUTTON_OTHER_Y + theRow * CHALLENGE_BUTTON_OTHER_ROW_PITCH;
+    }
+
+    // ChallengeScreen::ChallengeScreen (ChallengeScreen.cpp:114-211)
+    public ChallengeScreen(LawnApp theApp, int thePage) {
+        mLockShakeX = 0;
+        mLockShakeY = 0;
+        mPageIndex = thePage;
+        mApp = theApp;
+        mClip = false;
+        mCheatEnableChallenges = false;
+        mUnlockState = UnlockingState.UNLOCK_OFF;
+        mUnlockChallengeIndex = -1;
+        mUnlockStateCounter = 0;
+        mLimboPageUnlocked = false;
+        mClickCount = 0;
+        mLastClickUpdateCnt = 0;
+        mLoadedResourceNames.add("DelayLoad_ChallengeScreen");
+        Resources.extractResourcesByName(mApp.mResourceManager, "DelayLoad_ChallengeScreen");
+
+        // ChallengeScreen.cpp:130-131: the groups registered above are loaded right away, before any widget reads its
+        // images - without this the screen drew null images for everything they provide.
+        for (String aResource : mLoadedResourceNames) {
+            ((io.github.pvzjre.portable.pvzp.PvzpResourceManager) mApp.mResourceManager).pvzpLoadResources(aResource);
+        }
+
+        mBackButton = GameButton.makeNewButton(ChallengeScreen_Back, this, "[BACK_TO_MENU]", null,
+                Resources.getImageById(Resources.IMAGE_SEEDCHOOSER_BUTTON2_ID),
+                Resources.getImageById(Resources.IMAGE_SEEDCHOOSER_BUTTON2_GLOW_ID),
+                Resources.getImageById(Resources.IMAGE_SEEDCHOOSER_BUTTON2_GLOW_ID));
+        mBackButton.mTextDownOffsetX = 1;
+        mBackButton.mTextDownOffsetY = 1;
+        mBackButton.setLabelColor(new Color(42, 42, 90));
+        mBackButton.setLabelHiliteColor(new Color(42, 42, 90));
+        mBackButton.resize(CHALLENGE_BACK_BUTTON_X, CHALLENGE_BACK_BUTTON_Y,
+                CHALLENGE_BACK_BUTTON_WIDTH, CHALLENGE_BACK_BUTTON_HEIGHT);
+
+        for (int aPageIdx = ChallengePage.CHALLENGE_PAGE_SURVIVAL; aPageIdx < ChallengePage.MAX_CHALLANGE_PAGES; aPageIdx++) {
+            // PORT-NOTE (deviation): upstream labels the limbo button from LIMBO_PAGE_BUTTON
+            // ("状态页" in the retail table); the user asked for a numbered label instead, so both
+            // visible buttons carry [PAGE_X] — 第 1 页 (mini-games) / 第 2 页 (limbo). The labels are
+            // frameless: the shared frame around the whole switcher is one scaled button image drawn
+            // by draw() behind them.
+            mPageButton[aPageIdx] = new ButtonWidget(ChallengeScreen_Page + aPageIdx, this);
+            ButtonWidget aPageButton = mPageButton[aPageIdx];
+            aPageButton.mDoFinger = true;
+            aPageButton.mLabel = PvzpStringFile.translate("[PAGE_X]")
+                    .replace("{PAGE}", Integer.toString(aPageIdx));
+            aPageButton.mButtonImage = Resources.getImageById(Resources.IMAGE_BLANK_ID);
+            aPageButton.mOverImage = Resources.getImageById(Resources.IMAGE_BLANK_ID);
+            aPageButton.mDownImage = Resources.getImageById(Resources.IMAGE_BLANK_ID);
+            aPageButton.setFont(Resources.getFontById(Resources.FONT_BRIANNETOD12_ID));
+            aPageButton.resize(CHALLENGE_PAGE_BUTTON_X + CHALLENGE_PAGE_BUTTON_PITCH * aPageIdx,
+                    CHALLENGE_PAGE_BUTTON_Y, CHALLENGE_PAGE_BUTTON_WIDTH, CHALLENGE_PAGE_BUTTON_HEIGHT);
+            if (!showPageButtons() || aPageIdx == ChallengePage.CHALLENGE_PAGE_SURVIVAL
+                    || aPageIdx == ChallengePage.CHALLENGE_PAGE_PUZZLE) {
+                aPageButton.mVisible = false;
+            }
+        }
+
+        for (int aChallengeMode = 0; aChallengeMode < NUM_CHALLENGE_MODES; aChallengeMode++) {
+            ChallengeDefinition aChlDef = getChallengeDefinition(aChallengeMode);
+            mChallengeButtons[aChallengeMode] = new ButtonWidget(ChallengeScreen_Mode + aChallengeMode, this);
+            ButtonWidget aChallengeButton = mChallengeButtons[aChallengeMode];
+            aChallengeButton.mDoFinger = true;
+            aChallengeButton.mFrameNoDraw = true;
+            // the row-aware x mapping: the showcase row centers its entries on the 128px pitch
+            aChallengeButton.resize(challengeButtonXYCol(aChlDef.mPage, aChlDef.mRow, aChlDef.mCol),
+                    challengeButtonY(aChlDef.mPage, aChlDef.mRow),
+                    CHALLENGE_BUTTON_WIDTH, CHALLENGE_BUTTON_HEIGHT);
+            if (!isEntryEnabled(aChallengeMode, moreTrophiesNeeded(aChallengeMode))) {
+                aChallengeButton.mDoFinger = false;
+                aChallengeButton.setDisabled(true);
+            }
+        }
+
+        mToolTip = new ToolTipWidget();
+        mToolTip.mCenter = true;
+        mToolTip.mVisible = false;
+        updateButtons();
+
+        if (mApp.mGameMode != GameMode.GAMEMODE_UPSELL || mApp.mGameScene != GameScenes.SCENE_LEVEL_INTRO) {
+            mApp.mMusic.makeSureMusicIsPlaying(MusicTune.MUSIC_TUNE_CHOOSE_YOUR_SEEDS);
+        }
+
+        if (mPageIndex == ChallengePage.CHALLENGE_PAGE_SURVIVAL && mApp.mPlayerInfo.mHasNewSurvival != 0) {
+            setUnlockChallengeIndex(mPageIndex, false);
+            mApp.mPlayerInfo.mHasNewSurvival = 0;
+        } else if (mPageIndex == ChallengePage.CHALLENGE_PAGE_CHALLENGE && mApp.mPlayerInfo.mHasNewMiniGame != 0) {
+            setUnlockChallengeIndex(mPageIndex, false);
+            mApp.mPlayerInfo.mHasNewMiniGame = 0;
+        } else if (mPageIndex == ChallengePage.CHALLENGE_PAGE_PUZZLE) {
+            if (mApp.mPlayerInfo.mHasNewScaryPotter != 0) {
+                setUnlockChallengeIndex(mPageIndex, false);
+                mApp.mPlayerInfo.mHasNewScaryPotter = 0;
+            } else if (mApp.mPlayerInfo.mHasNewIZombie != 0) {
+                setUnlockChallengeIndex(mPageIndex, true);
+                mApp.mPlayerInfo.mHasNewIZombie = 0;
+            }
+        }
+
+    }
+
+    // ChallengeScreen::IsScaryPotterLevel (ChallengeScreen.cpp:224-228)
+    public boolean isScaryPotterLevel(int theGameMode) {
+        return theGameMode >= GameMode.GAMEMODE_SCARY_POTTER_1 && theGameMode <= GameMode.GAMEMODE_SCARY_POTTER_ENDLESS;
+    }
+
+    // ChallengeScreen::IsIZombieLevel (ChallengeScreen.cpp:230-233)
+    public boolean isIZombieLevel(int theGameMode) {
+        return theGameMode >= GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_1
+                && theGameMode <= GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_ENDLESS;
+    }
+
+    // ChallengeScreen::SetUnlockChallengeIndex (ChallengeScreen.cpp:235-254)
+    public void setUnlockChallengeIndex(int thePage, boolean theIsIZombie) {
+        mUnlockState = UnlockingState.UNLOCK_SHAKING;
+        mUnlockStateCounter = 100;
+        mUnlockChallengeIndex = 0;
+        for (int aChallengeMode = 0; aChallengeMode < NUM_CHALLENGE_MODES; aChallengeMode++) {
+            ChallengeDefinition aDef = getChallengeDefinition(aChallengeMode);
+            if (aDef.mPage == thePage) {
+                if (thePage != ChallengePage.CHALLENGE_PAGE_PUZZLE
+                        || (!theIsIZombie && isScaryPotterLevel(aDef.mChallengeMode))
+                        || (theIsIZombie && isIZombieLevel(aDef.mChallengeMode))) {
+                    if (accomplishmentsNeeded(aChallengeMode) <= 0) {
+                        mUnlockChallengeIndex = aChallengeMode;
+                    }
+                }
+            }
+        }
+    }
+
+    // ChallengeScreen::MoreTrophiesNeeded (ChallengeScreen.cpp:256-326)
+    public int moreTrophiesNeeded(int theChallengeIndex) {
+        ChallengeDefinition aDef = getChallengeDefinition(theChallengeIndex);
+        if (mApp.mGameMode == GameMode.GAMEMODE_UPSELL && mApp.mGameScene == GameScenes.SCENE_LEVEL_INTRO) {
+            return aDef.mChallengeMode == GameMode.GAMEMODE_CHALLENGE_FINAL_BOSS ? 1 : 0;
+        }
+
+        if (mApp.isTrialStageLocked()) {
+            if (mPageIndex == ChallengePage.CHALLENGE_PAGE_PUZZLE
+                    && aDef.mChallengeMode >= GameMode.GAMEMODE_SCARY_POTTER_4) {
+                return aDef.mChallengeMode == GameMode.GAMEMODE_SCARY_POTTER_4 ? 1 : 2;
+            } else if (mPageIndex == ChallengePage.CHALLENGE_PAGE_CHALLENGE
+                    && aDef.mChallengeMode >= GameMode.GAMEMODE_CHALLENGE_RAINING_SEEDS) {
+                return aDef.mChallengeMode == GameMode.GAMEMODE_CHALLENGE_RAINING_SEEDS ? 1 : 2;
+            } else if (mPageIndex == ChallengePage.CHALLENGE_PAGE_SURVIVAL
+                    && aDef.mChallengeMode >= GameMode.GAMEMODE_SURVIVAL_NORMAL_STAGE_4) {
+                return aDef.mChallengeMode == GameMode.GAMEMODE_SURVIVAL_NORMAL_STAGE_4 ? 1 : 2;
+            }
+        }
+
+        if (aDef.mPage == ChallengePage.CHALLENGE_PAGE_PUZZLE) {
+            if (isScaryPotterLevel(aDef.mChallengeMode)) {
+                int aLevelsCompleted = 0;
+                for (ChallengeDefinition aSPDef : gChallengeDefs) {
+                    if (isScaryPotterLevel(aSPDef.mChallengeMode) && mApp.hasBeatenChallenge(aSPDef.mChallengeMode)) {
+                        aLevelsCompleted++;
+                    }
+                }
+
+                if (aDef.mChallengeMode < GameMode.GAMEMODE_SCARY_POTTER_4 || mApp.hasFinishedAdventure()
+                        || aLevelsCompleted < 3) {
+                    return Math.clamp(aDef.mChallengeMode - GameMode.GAMEMODE_SCARY_POTTER_1 - aLevelsCompleted, 0, 9);
+                }
+                return aDef.mChallengeMode == GameMode.GAMEMODE_SCARY_POTTER_4 ? 1 : 2;
+            } else if (isIZombieLevel(aDef.mChallengeMode)) {
+                int aLevelsCompleted = 0;
+                for (ChallengeDefinition aIZDef : gChallengeDefs) {
+                    if (isIZombieLevel(aIZDef.mChallengeMode) && mApp.hasBeatenChallenge(aIZDef.mChallengeMode)) {
+                        aLevelsCompleted++;
+                    }
+                }
+
+                if (aDef.mChallengeMode < GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_4 || mApp.hasFinishedAdventure()
+                        || aLevelsCompleted < 3) {
+                    return Math.clamp(aDef.mChallengeMode - GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_1 - aLevelsCompleted, 0, 9);
+                }
+                return aDef.mChallengeMode == GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_4 ? 1 : 2;
+            }
+        } else {
+            int aIdxInPage = aDef.mRow * 5 + aDef.mCol;
+            if ((aDef.mPage == ChallengePage.CHALLENGE_PAGE_CHALLENGE
+                    || aDef.mPage == ChallengePage.CHALLENGE_PAGE_SURVIVAL) && !mApp.hasFinishedAdventure()) {
+                return aIdxInPage < 3 ? 0 : aIdxInPage == 3 ? 1 : 2;
+            }
+            int aNumTrophies = mApp.getNumTrophies(aDef.mPage);
+            if (aDef.mPage == ChallengePage.CHALLENGE_PAGE_LIMBO) {
+                return 0;
+            }
+            if (LawnApp.isSurvivalEndless(aDef.mChallengeMode)) {
+                return 10 - aNumTrophies;
+            }
+            if (aDef.mPage == ChallengePage.CHALLENGE_PAGE_SURVIVAL
+                    || aDef.mPage == ChallengePage.CHALLENGE_PAGE_CHALLENGE) {
+                aNumTrophies += 3;
+            }
+
+            return aIdxInPage >= aNumTrophies ? aIdxInPage - aNumTrophies + 1 : 0;
+        }
+
+        // Unreachable for the four known pages.
+        return 0;
+    }
+
+    // ChallengeScreen::ShowPageButtons (ChallengeScreen.cpp:356-360)
+    // PORT-NOTE (deviation): upstream shows the switcher only with cheat keys and only on the
+    // mini-game page; the hidden-content enablement drops the cheat-key gate and also shows it on
+    // the limbo page (so there is a way back). The survival and puzzle pages keep no switcher, and
+    // their buttons stay hidden (next loop).
+    public boolean showPageButtons() {
+        return mPageIndex == ChallengePage.CHALLENGE_PAGE_CHALLENGE
+                || mPageIndex == ChallengePage.CHALLENGE_PAGE_LIMBO;
+    }
+
+    // ChallengeScreen::UpdateButtons (ChallengeScreen.cpp:362-384)
+    public void updateButtons() {
+        for (int aChallengeMode = 0; aChallengeMode < NUM_CHALLENGE_MODES; aChallengeMode++) {
+            ChallengeDefinition aDef = getChallengeDefinition(aChallengeMode);
+            // PORT-NOTE (deviation): the squirrel demo is a visible playable entry now — it took
+            // ice's old cell (row 1, col 0) when ice moved onto the showcase row
+            mChallengeButtons[aChallengeMode].mVisible = aDef.mPage == mPageIndex;
+        }
+        // PORT-NOTE (deviation): with the -debug/-demo launch parameter the switcher shows
+        // unconditionally; without it the original five-click easter egg
+        // (ChallengeScreen.cpp:751-771 sets mLimboPageUnlocked, kept in mouseDown) gates the limbo
+        // button again.
+        boolean aLimboUnlocked = mApp.mDebugLaunch || mLimboPageUnlocked;
+        for (int aPage = 0; aPage < ChallengePage.MAX_CHALLANGE_PAGES; aPage++) {
+            ButtonWidget aPageButton = mPageButton[aPage];
+
+            // PORT-NOTE (deviation): the locked (non-debug) state keeps the whole switcher
+            // invisible - the original easter-egg look, no "current page" highlight either
+            if (!aLimboUnlocked) {
+                aPageButton.mVisible = false;
+                continue;
+            }
+
+            // both switcher entries show on the switcher pages once unlocked
+            // (or with -debug/-demo); survival/puzzle keep their constructed-invisible state
+            if (aPage == ChallengePage.CHALLENGE_PAGE_LIMBO
+                    || aPage == ChallengePage.CHALLENGE_PAGE_CHALLENGE) {
+                aPageButton.mVisible = showPageButtons();
+            }
+
+            // the highlight follows the current page: yellow on the shared frame, not clickable;
+            // the other switcher entry is the click target in dark blue
+            if (aPage == mPageIndex) {
+                aPageButton.setLabelColor(new Color(255, 240, 0));
+                aPageButton.mDisabled = true;
+            } else {
+                aPageButton.setLabelColor(new Color(42, 42, 90));
+                aPageButton.mDisabled = false;
+            }
+        }
+    }
+
+    // ChallengeScreen::AccomplishmentsNeeded (ChallengeScreen.cpp:386-393)
+    public int accomplishmentsNeeded(int theChallengeIndex) {
+        int aTrophiesNeeded = moreTrophiesNeeded(theChallengeIndex);
+        int aGameMode = getChallengeDefinition(theChallengeIndex).mChallengeMode;
+        if (LawnApp.isSurvivalEndless(aGameMode) && aTrophiesNeeded <= 3
+                && mApp.getNumTrophies(ChallengePage.CHALLENGE_PAGE_SURVIVAL) < 10
+                && mApp.hasFinishedAdventure() && !mApp.isTrialStageLocked()) {
+            aTrophiesNeeded = 1;
+        }
+        return mCheatEnableChallenges ? 0 : aTrophiesNeeded;
+    }
+
+    /**
+     * Resolves a challenge name for display. Bracketed names go through the table as upstream;
+     * the four unbracketed upstream literals were never visible before the limbo page was
+     * surfaced, and the retail table banks localized text under the same-named keys
+     * ([SQUIRREL]/[TREE_OF_WISDOM]/[UPSELL]/[INTRO]) — so a raw name prefers the banked text
+     * ("Tree of Wisdom" → [TREE_OF_WISDOM]) and falls back to the literal when a PAK does not
+     * carry the key. Port addition (see drawButton).
+     */
+    public static String resolveChallengeName(String theName) {
+        if (theName.startsWith("[")) {
+            return PvzpStringFile.translate(theName);
+        }
+        return PvzpStringFile.tryTranslate("[" + theName.replace(' ', '_').toUpperCase() + "]")
+                .orElse(theName);
+    }
+
+    // ChallengeScreen::DrawButton (ChallengeScreen.cpp:395-566)
+    public void drawButton(Graphics g, int theChallengeIndex) {
+        ButtonWidget aChallengeButton = mChallengeButtons[theChallengeIndex];
+        if (!aChallengeButton.mVisible) {
+            return;
+        }
+
+        ChallengeDefinition aDef = getChallengeDefinition(theChallengeIndex);
+        int aPosX = aChallengeButton.mX;
+        int aPosY = aChallengeButton.mY;
+        if (aChallengeButton.mIsDown) {
+            aPosX++;
+            aPosY++;
+        }
+
+        if (accomplishmentsNeeded(theChallengeIndex) <= 1) {
+            // draw the minigame icon on the button
+            if (aChallengeButton.mDisabled) {
+                g.setColor(new Color(92, 92, 92));
+                g.setColorizeImages(true);
+            }
+            if (theChallengeIndex == mUnlockChallengeIndex) {
+                if (mUnlockState == UnlockingState.UNLOCK_SHAKING) {
+                    g.setColor(new Color(92, 92, 92));
+                } else if (mUnlockState == UnlockingState.UNLOCK_FADING) {
+                    int aColor = PvzpCommon.pvzpAnimateCurve(50, 25, mUnlockStateCounter, 92, 255, PvzpCurves.CURVE_LINEAR);
+                    g.setColor(new Color(aColor, aColor, aColor));
+                }
+                g.setColorizeImages(true);
+            }
+
+            if (mPageIndex == ChallengePage.CHALLENGE_PAGE_SURVIVAL) {
+                // PORT-NOTE (deviation): the five endless variants prefer the optional pak images /
+                // loose files (IMAGE_ENDLESS_* / images/ad/endless_*.jpg) as dedicated covers; the
+                // original sheet falls back to each stage's lawn cel (the def index)
+                if (!mEndlessCoversLoaded) {
+                    loadEndlessCovers();
+                }
+                int aCoverIndex = endlessCoverIndex(aDef.mChallengeMode);
+                Image aCover = aCoverIndex != -1 ? mEndlessCovers[aCoverIndex] : null;
+                if (aCover != null) {
+                    g.drawImage(aCover, new Rect(aPosX + 13, aPosY + 4, 80, 65),
+                            new Rect(0, 0, aCover.getWidth(), aCover.getHeight()));
+                } else {
+                    g.drawImageCel(Resources.getImageById(Resources.IMAGE_SURVIVAL_THUMBNAILS_ID),
+                            aPosX + 13, aPosY + 4, aDef.mChallengeIconIndex);
+                }
+            } else {
+                g.drawImageCel(Resources.getImageById(Resources.IMAGE_CHALLENGE_THUMBNAILS_ID),
+                        aPosX + 13, aPosY + 4, aDef.mChallengeIconIndex);
+            }
+
+            // draw the button frame
+            boolean aHighLight = aChallengeButton.mIsOver && theChallengeIndex != mUnlockChallengeIndex;
+            g.setColorizeImages(false);
+            g.drawImage(Resources.getImageById(aHighLight ? Resources.IMAGE_CHALLENGE_WINDOW_ID
+                    : Resources.IMAGE_CHALLENGE_WINDOW_HIGHLIGHT_ID), aPosX - 6, aPosY - 2);
+
+            // draw the challenge name
+            Color aTextColor = aHighLight ? new Color(250, 40, 40) : new Color(42, 42, 90);
+            String aName = resolveChallengeName(aDef.mChallengeName);
+            if (aChallengeButton.mDisabled
+                    || (theChallengeIndex == mUnlockChallengeIndex && mUnlockState == UnlockingState.UNLOCK_SHAKING)) {
+                aName = "?";
+            }
+
+            int aNameCharLen = aName.codePointCount(0, aName.length());
+            int aAutoWrapNum = mApp.getInteger("CHALLENGE_SCREEN_BUTTON_AUTO_WRAP_NUM", 13);
+            Font aFont = Resources.getFontById(Resources.FONT_BRIANNETOD12_ID);
+            if (aNameCharLen < aAutoWrapNum) {
+                PvzpCommon.pvzpDrawString(g, aName, aPosX + 52, aPosY + 96, aFont, aTextColor,
+                        DrawStringJustification.DS_ALIGN_CENTER);
+            } else {
+                // Split at a space in the second half, else any space; if none, the whole name stays on one line.
+                int aHalfPosChar = (mPageIndex == ChallengePage.CHALLENGE_PAGE_SURVIVAL && !aChallengeButton.mDisabled)
+                        ? 7 : (aNameCharLen / 2 - 1);
+                int aSplitPos = -1;
+                int aFallbackSpacePos = -1;
+                int aCharIdx = 0;
+                for (int aOffset = 0; aOffset < aName.length(); aCharIdx++) {
+                    int aCharStart = aOffset;
+                    int aChar = aName.codePointAt(aOffset);
+                    if (aChar == ' ') {
+                        if (aCharIdx >= aHalfPosChar) {
+                            aSplitPos = aCharStart;
+                            break;
+                        }
+                        if (aFallbackSpacePos == -1) {
+                            aFallbackSpacePos = aCharStart;
+                        }
+                    }
+                    aOffset += Character.charCount(aChar);
+                }
+                if (aSplitPos == -1) {
+                    aSplitPos = aFallbackSpacePos;
+                }
+
+                String aLine1;
+                String aLine2;
+                if (aSplitPos != -1) {
+                    aLine1 = aName.substring(0, aSplitPos);
+                    int aLine2Offset = aName.charAt(aSplitPos) == ' ' ? aSplitPos + 1 : aSplitPos;
+                    aLine2 = aName.substring(aLine2Offset);
+                } else {
+                    aLine1 = aName;
+                    aLine2 = "";
+                }
+
+                PvzpCommon.pvzpDrawString(g, aLine1, aPosX + 52, aPosY + 88, aFont, aTextColor,
+                        DrawStringJustification.DS_ALIGN_CENTER);
+                if (!aLine2.isEmpty()) {
+                    PvzpCommon.pvzpDrawString(g, aLine2, aPosX + 52, aPosY + 102, aFont, aTextColor,
+                            DrawStringJustification.DS_ALIGN_CENTER);
+                }
+            }
+
+            // draw the lock or completion images and the best record text
+            int aRecord = mApp.mPlayerInfo.mChallengeRecords[theChallengeIndex];
+            // Port addition: showcase entries never draw a completion badge (isShowcaseEntry).
+            if (theChallengeIndex == mUnlockChallengeIndex) {
+                Image aLockImage = Resources.getImageById(Resources.IMAGE_LOCK_ID);
+                if (mUnlockState == UnlockingState.UNLOCK_FADING) {
+                    aLockImage = Resources.getImageById(Resources.IMAGE_LOCK_OPEN_ID);
+                    g.setColor(new Color(255, 255, 255,
+                            PvzpCommon.pvzpAnimateCurve(25, 0, mUnlockStateCounter, 255, 0, PvzpCurves.CURVE_LINEAR)));
+                    g.setColorizeImages(true);
+                }
+                PvzpCommon.pvzpDrawImageScaledF(g, aLockImage, aPosX + 24 + mLockShakeX, aPosY + 9 + mLockShakeY,
+                        0.7f, 0.7f);
+                g.setColorizeImages(false);
+            } else if (!isShowcaseEntry(aDef.mChallengeMode) && aRecord > 0) {
+                if (mApp.hasBeatenChallenge(aDef.mChallengeMode)) {
+                    g.drawImage(Resources.getImageById(Resources.IMAGE_MINIGAME_TROPHY_ID), aPosX - 6, aPosY - 2);
+                } else if (LawnApp.isEndlessScaryPotter(aDef.mChallengeMode)
+                        || LawnApp.isEndlessIZombie(aDef.mChallengeMode)) {
+                    String aAchievement = LawnApp.pluralize(aRecord, "[ONE_FLAG]", "[COUNT_FLAGS]");
+                    Font aFlagFont = Resources.getFontById(Resources.FONT_CONTINUUMBOLD14OUTLINE_ID);
+                    PvzpCommon.pvzpDrawString(g, aAchievement, aPosX + 48, aPosY + 48, aFlagFont, Color.White,
+                            DrawStringJustification.DS_ALIGN_CENTER);
+                    PvzpCommon.pvzpDrawString(g, aAchievement, aPosX + 48, aPosY + 48,
+                            Resources.getFontById(Resources.FONT_CONTINUUMBOLD14_ID), new Color(255, 0, 0),
+                            DrawStringJustification.DS_ALIGN_CENTER);
+                } else if (LawnApp.isSurvivalEndless(aDef.mChallengeMode)) {
+                    String aAchievement = PvzpStringFile.translate("[LONGEST_STREAK]")
+                            .replace("{STREAK}", Integer.toString(aRecord));
+                    Rect aRect = new Rect(aPosX, aPosY + 15, 96, 200);
+                    drawStringWrapped(g, aAchievement, aRect, Resources.getFontById(Resources.FONT_CONTINUUMBOLD14OUTLINE_ID),
+                            Color.White);
+                    drawStringWrapped(g, aAchievement, aRect, Resources.getFontById(Resources.FONT_CONTINUUMBOLD14_ID),
+                            new Color(255, 0, 0));
+                }
+            } else if (aChallengeButton.mDisabled) {
+                PvzpCommon.pvzpDrawImageScaledF(g, Resources.getImageById(Resources.IMAGE_LOCK_ID),
+                        aPosX + 24, aPosY + 9, 0.7f, 0.7f);
+            }
+        } else {
+            g.drawImage(Resources.getImageById(Resources.IMAGE_CHALLENGE_BLANK_ID), aPosX, aPosY);
+        }
+    }
+
+    /** Upstream {@code PvzpDrawStringWrapped} (ChallengeScreen.cpp:551-555) with the active font/colour. */
+    private void drawStringWrapped(Graphics g, String theText, Rect theRect, Font theFont, Color theColor) {
+        g.setFont(theFont);
+        g.setColor(theColor);
+        g.writeWordWrapped(theRect, PvzpStringFile.translate(theText), -1,
+                DrawStringJustification.DS_ALIGN_CENTER, null, -1, null);
+    }
+
+    // ChallengeScreen::Draw (ChallengeScreen.cpp:568-592)
+    @Override
+    public void draw(Graphics g) {
+        g.setLinearBlend(true);
+        g.drawImage(Resources.getImageById(Resources.IMAGE_CHALLENGE_BACKGROUND_ID), 0, 0);
+
+        // PORT-NOTE (deviation): the switcher's shared frame — one button image scaled around both
+        // labels (child widgets draw after this, so the labels land on top). Only on the switcher
+        // pages, and only while the limbo button is visible (the easter-egg-locked state shows the
+        // original frameless look); the highlight itself is the labels' font colors.
+        if (showPageButtons() && (mApp.mDebugLaunch || mLimboPageUnlocked)) {
+            Image aFrame = Resources.getImageById(Resources.IMAGE_SEEDCHOOSER_BUTTON2_ID);
+            g.drawImage(aFrame,
+                    new Rect(CHALLENGE_PAGE_FRAME_X, CHALLENGE_PAGE_FRAME_Y,
+                            CHALLENGE_PAGE_FRAME_WIDTH, CHALLENGE_PAGE_FRAME_HEIGHT),
+                    new Rect(0, 0, aFrame.getWidth(), aFrame.getHeight()));
+        }
+
+        String aTitleString = mPageIndex == ChallengePage.CHALLENGE_PAGE_SURVIVAL ? "[PICK_AREA]"
+                : mPageIndex == ChallengePage.CHALLENGE_PAGE_PUZZLE ? "[SCARY_POTTER]" : "[PICK_CHALLENGE]";
+        PvzpCommon.pvzpDrawString(g, aTitleString, 400, 58, Resources.getFontById(Resources.FONT_HOUSEOFTERROR28_ID),
+                new Color(220, 220, 220), DrawStringJustification.DS_ALIGN_CENTER);
+
+        int aTrophiesGot = mApp.getNumTrophies(mPageIndex);
+        int aTrophiesTotal = trophyTotalForPage(mPageIndex);
+        if (aTrophiesTotal > 0) {
+            String aTrophyString = aTrophiesGot + "/" + aTrophiesTotal;
+            PvzpCommon.pvzpDrawString(g, aTrophyString, 739, 73, Resources.getFontById(Resources.FONT_DWARVENTODCRAFT15_ID),
+                    new Color(255, 240, 0), DrawStringJustification.DS_ALIGN_CENTER);
+        }
+        PvzpCommon.pvzpDrawImageScaledF(g, Resources.getImageById(Resources.IMAGE_TROPHY_ID), 718, 26, 0.5f, 0.5f);
+
+        for (int aChallengeMode = 0; aChallengeMode < NUM_CHALLENGE_MODES; aChallengeMode++) {
+            drawButton(g, aChallengeMode);
+        }
+
+        mToolTip.draw(g);
+    }
+
+    /**
+     * The trophy counter's per-page total (ChallengeScreen.cpp:577-581). PORT-NOTE (deviation):
+     * the limbo total is a port addition — upstream showed no counter there (total 0), but the
+     * re-laid-out page banks trophies for its 12 playable entries.
+     */
+    public static int trophyTotalForPage(int thePage) {
+        if (thePage == ChallengePage.CHALLENGE_PAGE_SURVIVAL) {
+            return 10;
+        }
+        if (thePage == ChallengePage.CHALLENGE_PAGE_CHALLENGE) {
+            return 20;
+        }
+        if (thePage == ChallengePage.CHALLENGE_PAGE_PUZZLE) {
+            return 18;
+        }
+        if (thePage == ChallengePage.CHALLENGE_PAGE_LIMBO) {
+            return 12;
+        }
+        return 0;
+    }
+
+    // ChallengeScreen::Update (ChallengeScreen.cpp:594-622)
+    @Override
+    public void update() {
+        super.update();
+        updateToolTip();
+
+        if (mUnlockStateCounter > 0) {
+            mUnlockStateCounter--;
+        }
+        if (mUnlockState == UnlockingState.UNLOCK_SHAKING) {
+            if (mUnlockStateCounter == 0) {
+                mApp.playFoley(FoleyType.FOLEY_PAPER);
+                mUnlockState = UnlockingState.UNLOCK_FADING;
+                mUnlockStateCounter = 50;
+                mLockShakeX = 0;
+                mLockShakeY = 0;
+            } else {
+                mLockShakeX = PvzpCommon.randRangeFloat(-2, 2);
+                mLockShakeY = PvzpCommon.randRangeFloat(-2, 2);
+            }
+        } else if (mUnlockState == UnlockingState.UNLOCK_FADING && mUnlockStateCounter == 0) {
+            mUnlockState = UnlockingState.UNLOCK_OFF;
+            mUnlockStateCounter = 0;
+            mUnlockChallengeIndex = -1;
+        }
+
+        markDirty();
+    }
+
+    // ChallengeScreen::AddedToManager (ChallengeScreen.cpp:624-631)
+    @Override
+    public void addedToManager(WidgetManager theWidgetManager) {
+        super.addedToManager(theWidgetManager);
+        addWidget(mBackButton);
+        for (ButtonWidget aButton : mPageButton) {
+            addWidget(aButton);
+        }
+        for (ButtonWidget aButton : mChallengeButtons) {
+            addWidget(aButton);
+        }
+    }
+
+    // ChallengeScreen::RemovedFromManager (ChallengeScreen.cpp:633-640)
+    @Override
+    public void removedFromManager(WidgetManager theWidgetManager) {
+        super.removedFromManager(theWidgetManager);
+        removeWidget(mBackButton);
+        for (ButtonWidget aButton : mPageButton) {
+            removeWidget(aButton);
+        }
+        for (ButtonWidget aButton : mChallengeButtons) {
+            removeWidget(aButton);
+        }
+    }
+
+    // ChallengeScreen::ButtonPress (ChallengeScreen.cpp:642-645)
+    @Override
+    public void buttonPress(int theId) {
+        mApp.playSample(Resources.SOUND_BUTTONCLICK_ID);
+    }
+
+    @Override
+    public void buttonDownTick(int theId) {
+    }
+
+    @Override
+    public void buttonMouseEnter(int theId) {
+    }
+
+    @Override
+    public void buttonMouseLeave(int theId) {
+    }
+
+    @Override
+    public void buttonMouseMove(int theId, int theX, int theY) {
+    }
+
+    // ChallengeScreen::ButtonDepress (ChallengeScreen.cpp:646-667)
+    @Override
+    public void buttonDepress(int theId) {
+        if (theId == ChallengeScreen_Back) {
+            mApp.killChallengeScreen();
+            mApp.doBackToMain();
+            return;
+        }
+
+        int aChallengeMode = theId - ChallengeScreen_Mode;
+        if (aChallengeMode >= 0 && aChallengeMode < NUM_CHALLENGE_MODES) {
+            mApp.killChallengeScreen();
+            mApp.preNewGame(aChallengeMode + 1, true);
+            return;
+        }
+
+        int aPageIndex = theId - ChallengeScreen_Page;
+        if (aPageIndex >= 0 && aPageIndex < ChallengePage.MAX_CHALLANGE_PAGES) {
+            mPageIndex = aPageIndex;
+            updateButtons();
+        }
+    }
+
+    // ChallengeScreen::KeyDown (ChallengeScreen.cpp:669-675)
+    @Override
+    public void keyDown(int theKey) {
+        if (theKey == KeyCode.KEYCODE_ESCAPE) {
+            buttonDepress(ChallengeScreen_Back);
+        }
+    }
+
+    // ChallengeScreen::UpdateToolTip (ChallengeScreen.cpp:677-749)
+    public void updateToolTip() {
+        if (!mApp.mWidgetManager.mMouseIn || !mApp.mActive) {
+            mToolTip.mVisible = false;
+            return;
+        }
+
+        for (int aChallengeMode = 0; aChallengeMode < NUM_CHALLENGE_MODES; aChallengeMode++) {
+            ChallengeDefinition aDef = getChallengeDefinition(aChallengeMode);
+            ButtonWidget aChallengeButton = mChallengeButtons[aChallengeMode];
+            if (aChallengeButton.mVisible && aChallengeButton.mDisabled
+                    && aChallengeButton.contains(mApp.mWidgetManager.mLastMouseX, mApp.mWidgetManager.mLastMouseY)
+                    && accomplishmentsNeeded(aChallengeMode) <= 1) {
+                mToolTip.mX = aChallengeButton.mWidth / 2 + aChallengeButton.mX;
+                mToolTip.mY = aChallengeButton.mY;
+
+                if (moreTrophiesNeeded(aChallengeMode) > 0) {
+                    String aLabel;
+                    if (mPageIndex == ChallengePage.CHALLENGE_PAGE_PUZZLE) {
+                        if (isScaryPotterLevel(aDef.mChallengeMode)) {
+                            if (!mApp.hasFinishedAdventure() && aDef.mChallengeMode == GameMode.GAMEMODE_SCARY_POTTER_4) {
+                                aLabel = "[FINISH_ADVENTURE_TOOLTIP]";
+                            } else {
+                                aLabel = "[ONE_MORE_SCARY_POTTER_TOOLTIP]";
+                            }
+                        } else if (isIZombieLevel(aDef.mChallengeMode)) {
+                            if (!mApp.hasFinishedAdventure() && aDef.mChallengeMode == GameMode.GAMEMODE_PUZZLE_I_ZOMBIE_4) {
+                                aLabel = "[FINISH_ADVENTURE_TOOLTIP]";
+                            } else {
+                                aLabel = "[ONE_MORE_IZOMBIE_TOOLTIP]";
+                            }
+                        } else {
+                            continue;
+                        }
+                    } else if (!mApp.hasFinishedAdventure() || mApp.isTrialStageLocked()) {
+                        aLabel = "[FINISH_ADVENTURE_TOOLTIP]";
+                    } else if (LawnApp.isSurvivalEndless(aDef.mChallengeMode)) {
+                        aLabel = "[10_SURVIVAL_TOOLTIP]";
+                    } else if (mPageIndex == ChallengePage.CHALLENGE_PAGE_SURVIVAL) {
+                        aLabel = "[ONE_MORE_SURVIVAL_TOOLTIP]";
+                    } else if (mPageIndex == ChallengePage.CHALLENGE_PAGE_CHALLENGE) {
+                        aLabel = "[ONE_MORE_CHALLENGE_TOOLTIP]";
+                    } else {
+                        continue;
+                    }
+
+                    mToolTip.setLabel(aLabel);
+                    mToolTip.mVisible = true;
+                    return;
+                }
+            }
+        }
+
+        mToolTip.mVisible = false;
+    }
+
+    // ChallengeScreen::MouseDown (ChallengeScreen.cpp:751-771)
+    @Override
+    public void mouseDown(int x, int y, int theClickCount) {
+        super.mouseDown(x, y, theClickCount);
+
+        if (mLimboPageUnlocked) {
+            return;
+        }
+
+        final int MAX_GAP_TICKS = 20; // 200 ms at 100 update ticks/sec
+        final int CLICKS_NEEDED = 5;
+
+        int aNow = mApp.mUpdateCount;
+        if (aNow - mLastClickUpdateCnt > MAX_GAP_TICKS) {
+            mClickCount = 0;
+        }
+        mLastClickUpdateCnt = aNow;
+        mClickCount++;
+        if (mClickCount >= CLICKS_NEEDED) {
+            mLimboPageUnlocked = true;
+            updateButtons();
+        }
+    }
+}
