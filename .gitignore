@@ -1,0 +1,77 @@
+.gradle
+build/
+dist/
+examples/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### IntelliJ IDEA ###
+.idea/
+.idea/modules.xml
+.idea/jarRepositories.xml
+.idea/compiler.xml
+.idea/libraries/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+
+### Fabric ###
+run/
+
+### The game's user data: written when the game runs straight from this directory ###
+userdata/
+cache64/
+
+### Local play setup: retail assets, the unpacked distribution, the local launcher script ###
+# The retail game assets (main.pak / properties/): PopCap/EA property, never enters the
+# repository (AGENTS.md §7 rule 6) — unanchored so an asset drop is safe at any depth
+main.pak
+properties/
+/PVZ_GOTY/
+# The unpacked distZip output extracted for playing (any version, at the project root)
+/pvz-portable-*/
+# A machine-specific convenience launcher (hard-coded JDK path, local asset layout)
+/启动游戏.bat
+/loading.jpg
+/MC F3左上角数据.png
+/MC F3右上角数据.png
+/注释池.txt
+/crash-2023-08-14_20.02.39-client.txt
+/logs/
+run/logs/
+.zcode/
+图标组1.ico
+光标13.cur
+版本信息1.rc
+免责声明.txt
+/saves/
+

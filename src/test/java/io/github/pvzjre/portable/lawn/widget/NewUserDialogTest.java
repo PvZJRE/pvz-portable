@@ -1,0 +1,142 @@
+/*
+ * Tests for io.github.pvzjre.portable.lawn.widget.NewUserDialog - the "please enter your name" profile dialog.
+ */
+package io.github.pvzjre.portable.lawn.widget;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import org.junit.jupiter.api.Test;
+import io.github.pvzjre.portable.lawn.Dialogs;
+import io.github.pvzjre.portable.sexy.Color;
+import io.github.pvzjre.portable.sexy.Rect;
+import io.github.pvzjre.portable.sexy.graphics.Font;
+import io.github.pvzjre.portable.sexy.graphics.Graphics;
+import io.github.pvzjre.portable.lawn.LawnApp;
+import io.github.pvzjre.portable.test.HeadlessTestApp;
+
+/**
+ * Headless checks for {@link NewUserDialog}, in particular that the name field actually takes typed
+ * text once the dialog is on screen (the field is only reachable through the widget manager's text
+ * routing, which is also what the platform feeds from SDL's text-input events).
+ */
+class NewUserDialogTest {
+
+    private static LawnApp newApp() {
+        LawnApp app = new LawnApp();
+        HeadlessTestApp.initialize(app);
+        return app;
+    }
+
+    /**
+     * A font with a non-zero advance for every character. {@code EditWidget.insertTextAtCursor}
+     * (EditWidget.cpp:461-475) drops code points whose {@code charWidth} is 0, and the fixture's stub
+     * fonts deliberately measure as zero width for layout maths, so a typing test needs this.
+     */
+    private static final class WideningFont extends Font {
+        @Override
+        public int stringWidth(String theString) {
+            return theString == null ? 0 : theString.length() * 8;
+        }
+
+        @Override
+        public int charWidth(int theChar) {
+            return 8;
+        }
+
+        @Override
+        public int charWidthKern(int theChar, int thePrevChar) {
+            return 8;
+        }
+
+        @Override
+        public void drawString(Graphics g, int theX, int theY, String theString, Color theColor, Rect theClipRect) {
+        }
+
+        @Override
+        public Font duplicate() {
+            return new WideningFont();
+        }
+    }
+
+    /** A dialog whose name field can actually accept characters (see {@link WideningFont}). */
+    private static NewUserDialog newTypableDialog(LawnApp app) {
+        NewUserDialog aDialog = new NewUserDialog(app, false);
+        aDialog.mNameEditWidget.setFont(new WideningFont(), null);
+        app.addDialog(aDialog);
+        return aDialog;
+    }
+
+    @Test
+    void constructorBuildsTheNameFieldWithTheUpstreamLimit() {
+        LawnApp app = newApp();
+        NewUserDialog aDialog = new NewUserDialog(app, false);
+
+        assertEquals(Dialogs.DIALOG_CREATEUSER, aDialog.mId);
+        assertNotNull(aDialog.mNameEditWidget, "the name field must exist");
+        assertEquals(12, aDialog.mNameEditWidget.mMaxChars, "upstream caps names at 12 characters");
+    }
+
+    @Test
+    void addedToManagerFocusesTheNameField() {
+        LawnApp app = newApp();
+        NewUserDialog aDialog = new NewUserDialog(app, false);
+
+        app.addDialog(aDialog);
+
+        assertSame(aDialog.mNameEditWidget, app.mWidgetManager.mFocusWidget,
+                "typing must land in the name field as soon as the dialog is on screen");
+    }
+
+    @Test
+    void typedTextLandsInTheNameField() {
+        LawnApp app = newApp();
+        NewUserDialog aDialog = newTypableDialog(app);
+
+        // This is the path SDL text-input events take: platform -> SexyAppBase -> WidgetManager.
+        app.mWidgetManager.keyText("Alice");
+
+        assertEquals("Alice", aDialog.mNameEditWidget.mString);
+    }
+
+    /** Profile names keep the letters as typed: the name field opts out of upstream's first-letter
+     *  auto-capitalisation (LawnCommon.cpp AutoCapChar — the reason original-game profile names all
+     *  start with a capital). See the PORT-NOTE in NewUserDialog. */
+    @Test
+    void nameFieldKeepsLowercaseLettersAsTyped() {
+        // IME-style commits (SDL text-input -> WidgetManager.keyText): no auto-capitalisation.
+        LawnApp app = newApp();
+        NewUserDialog aDialog = newTypableDialog(app);
+        app.mWidgetManager.keyText("alice");
+        assertEquals("alice", aDialog.mNameEditWidget.mString, "lowercase must not be capitalised");
+
+        // Per-keystroke input (SDL key events -> keyChar): same rule.
+        NewUserDialog bDialog = newTypableDialog(newApp());
+        for (char c : "aLiCe".toCharArray()) {
+            bDialog.mNameEditWidget.keyChar(c);
+        }
+        assertEquals("aLiCe", bDialog.mNameEditWidget.mString);
+    }
+
+    @Test
+    void typingStopsAtTheCharacterLimit() {
+        LawnApp app = newApp();
+        NewUserDialog aDialog = newTypableDialog(app);
+
+        app.mWidgetManager.keyText("0123456789ABCDEF");
+
+        assertEquals(12, aDialog.mNameEditWidget.mString.length(),
+                "the field must not grow past its limit: " + aDialog.mNameEditWidget.mString);
+        assertTrue("0123456789ABCDEF".startsWith(aDialog.mNameEditWidget.mString));
+    }
+
+    @Test
+    void renameDialogUsesTheRenameId() {
+        LawnApp app = newApp();
+        NewUserDialog aDialog = new NewUserDialog(app, true);
+
+        assertEquals(Dialogs.DIALOG_RENAMEUSER, aDialog.mId);
+    }
+}

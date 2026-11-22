@@ -1,0 +1,601 @@
+/*
+ * Ported from src/Lawn/Widget/NewOptionsDialog.h:37-81 and src/Lawn/Widget/NewOptionsDialog.cpp:39-390.
+ *
+ * The pause/options dialog: music and sound-effect sliders, a full-screen and a hardware
+ * acceleration checkbox, and the almanac / restart / main-menu / back-to-game buttons (plus a
+ * disclaimer button in the game-selector variant - a port addition).
+ *
+ * Porting notes:
+ *  - Upstream derives directly from Sexy::Dialog (not LawnDialog); the dialog id stays
+ *    Dialogs.DIALOG_NEWOPTIONS.
+ *  - The button ids 0..7 keep the upstream enum names.
+ *  - Resize() adds the dialog origin (mX/mY) to the dialog-local literals of
+ *    NewOptionsDialog.cpp:150-157 (../verification/research/04-reanim-ui.md §13 deviation note 1: upstream
+ *    passes un-offset literals even though WidgetManager translates children by their own mX/mY).
+ *  - GetPreferredHeight reproduces the upstream quirk of returning the menuback image *width*.
+ */
+package io.github.pvzjre.portable.lawn.widget;
+
+import io.github.pvzjre.portable.lawn.AwardType;
+import io.github.pvzjre.portable.lawn.BoardResult;
+import io.github.pvzjre.portable.lawn.Dialogs;
+import io.github.pvzjre.portable.lawn.DrawStringJustification;
+import io.github.pvzjre.portable.lawn.GameMode;
+import io.github.pvzjre.portable.lawn.GameScenes;
+import io.github.pvzjre.portable.lawn.LawnApp;
+import io.github.pvzjre.portable.lawn.LawnCommon;
+import io.github.pvzjre.portable.lawn.Resources;
+import io.github.pvzjre.portable.lawn.SeedType;
+import io.github.pvzjre.portable.lawn.ZombieType;
+import io.github.pvzjre.portable.pvzp.PvzpCommon;
+import io.github.pvzjre.portable.pvzp.PvzpStringFile;
+import io.github.pvzjre.portable.sexy.Checkbox;
+import io.github.pvzjre.portable.sexy.CheckboxListener;
+import io.github.pvzjre.portable.sexy.Color;
+import io.github.pvzjre.portable.sexy.Dialog;
+import io.github.pvzjre.portable.sexy.KeyCode;
+import io.github.pvzjre.portable.sexy.Slider;
+import io.github.pvzjre.portable.sexy.SliderListener;
+import io.github.pvzjre.portable.sexy.WidgetManager;
+import io.github.pvzjre.portable.sexy.graphics.Font;
+import io.github.pvzjre.portable.sexy.graphics.Graphics;
+
+/**
+ * Ported from src/Lawn/Widget/NewOptionsDialog.h:37 (declaration) / src/Lawn/Widget/NewOptionsDialog.cpp:39
+ * (constructor).
+ */
+public class NewOptionsDialog extends Dialog implements SliderListener, CheckboxListener {
+
+    // NewOptionsDialog.h:39-48 (protected enum)
+    public static final int NewOptionsDialog_Almanac = 0;
+    public static final int NewOptionsDialog_MainMenu = 1;
+    public static final int NewOptionsDialog_Restart = 2;
+    public static final int NewOptionsDialog_Update = 3;
+    public static final int NewOptionsDialog_MusicVolume = 4;
+    public static final int NewOptionsDialog_SoundVolume = 5;
+    public static final int NewOptionsDialog_Fullscreen = 6;
+    /** Upstream id 7 is the hardware-acceleration checkbox; this port retired that toggle (the
+     * renderer pipeline is chosen once at launch, see --graphicsBackend) and the slot now holds
+     * the vertical-sync checkbox (a port addition). */
+    public static final int NewOptionsDialog_HardwareAcceleration = 7;
+    /** A port addition beyond the upstream enum: the auto-pause checkbox. */
+    public static final int NewOptionsDialog_AutoPause = 8;
+    /** A port addition beyond the upstream enum: the F3 debug-overlay checkbox. */
+    public static final int NewOptionsDialog_DebugInfo = 9;
+    /** A port addition beyond the upstream enum: the disclaimer button. */
+    public static final int NewOptionsDialog_Disclaimer = 10;
+    /** A port addition beyond the upstream enum: the vertical-sync checkbox (in the retired
+     * hardware-acceleration slot, id 7's row). */
+    public static final int NewOptionsDialog_VSync = 11;
+
+    /**
+     * The disclaimer body shown in the popup (a port addition, not in upstream). The disclaimer's
+     * three sentences, arranged as policy paragraphs (the LawnDialog word-wraps within a paragraph
+     * and sizes itself from the wrapped height, LawnDialog.cpp:142-149). The original text ran the
+     * sentences together ("unofficialMod"); the missing space is restored.
+     */
+    public static final String DISCLAIMER_TEXT =
+            "This is an unofficial Mod permitted under the Plants vs. Zombies Mod Policy.\n\n"
+                    + "Plant vs. Zombies game materials, copyrights, and trademarks are the"
+                    + " property of Electronic Arts Inc.\n\n"
+                    + "Electronic Arts and PopCap have not endorsed and are not responsible for"
+                    + " the operation or content of this Mod.";
+
+    // NewOptionsDialog.cpp:150-157 — layout table (dialog-local coordinates)
+    public static final int MUSIC_SLIDER_X = 199;
+    public static final int MUSIC_SLIDER_Y = 116;
+    public static final int MUSIC_SLIDER_WIDTH = 135;
+    public static final int MUSIC_SLIDER_HEIGHT = 40;
+
+    public static final int SFX_SLIDER_X = 199;
+    public static final int SFX_SLIDER_Y = 143;
+    public static final int SFX_SLIDER_WIDTH = 135;
+    public static final int SFX_SLIDER_HEIGHT = 40;
+
+    /** PORT-NOTE (deviation): upstream's 283 assumed an empty left column; with the port's
+     * left-column checkboxes in place the whole four-checkbox group reads left-heavy, so the right
+     * column sits 11px further right - the group then centers in the 423-wide dialog (83px of air
+     * on each side; the left column's own position is untouched).
+     */
+    public static final int HW_ACCEL_CHECKBOX_X = 294;
+    public static final int HW_ACCEL_CHECKBOX_Y = 175;
+    public static final int HW_ACCEL_CHECKBOX_WIDTH = 46;
+    public static final int HW_ACCEL_CHECKBOX_HEIGHT = 45;
+
+    /**
+     * The auto-pause checkbox sits in the empty left column of the hardware-acceleration row, the
+     * same size and row height as the right-column checkboxes (a port addition, not in upstream).
+     * The label reads as on every other row - text left, checkbox right - so the label is
+     * right-aligned into the checkbox with the same 9px gap the right column uses (283 checkbox /
+     * 274 label). The x is 1.2 checkbox widths right of the column's left edge, pulled 20px further
+     * left so the right column's four-glyph labels fit between the columns: 垂直同步 measures 48px
+     * and 全屏显示 64px in the real font (right-aligned at 274, so the widest starts at 210), and
+     * the left checkbox ends at 202 - an 8px gap at the worst case.
+     */
+    public static final int AUTO_PAUSE_CHECKBOX_X = 130 + (int) (1.0 * HW_ACCEL_CHECKBOX_WIDTH) - 20;
+    public static final int AUTO_PAUSE_CHECKBOX_Y = HW_ACCEL_CHECKBOX_Y;
+    public static final int AUTO_PAUSE_CHECKBOX_WIDTH = HW_ACCEL_CHECKBOX_WIDTH;
+    public static final int AUTO_PAUSE_CHECKBOX_HEIGHT = HW_ACCEL_CHECKBOX_HEIGHT;
+    /** The auto-pause label's right-alignment anchor: 9px left of its checkbox. */
+    public static final int AUTO_PAUSE_LABEL_X = AUTO_PAUSE_CHECKBOX_X - 9;
+
+    /** See the HW_ACCEL_CHECKBOX_X note: the right column moved 11px right as a unit. */
+    public static final int FULLSCREEN_CHECKBOX_X = 295;
+    public static final int FULLSCREEN_CHECKBOX_Y = 206;
+    public static final int FULLSCREEN_CHECKBOX_WIDTH = 46;
+    public static final int FULLSCREEN_CHECKBOX_HEIGHT = 45;
+
+    /**
+     * The debug-overlay checkbox sits in the left column, vertically aligned with the fullscreen
+     * row (a port addition, not in upstream); same column and label style as the auto-pause one.
+     */
+    public static final int DEBUG_INFO_CHECKBOX_X = AUTO_PAUSE_CHECKBOX_X;
+    public static final int DEBUG_INFO_CHECKBOX_Y = FULLSCREEN_CHECKBOX_Y;
+    public static final int DEBUG_INFO_CHECKBOX_WIDTH = AUTO_PAUSE_CHECKBOX_WIDTH;
+    public static final int DEBUG_INFO_CHECKBOX_HEIGHT = AUTO_PAUSE_CHECKBOX_HEIGHT;
+    public static final int DEBUG_INFO_LABEL_X = DEBUG_INFO_CHECKBOX_X - 9;
+
+    public static final int ALMANAC_BUTTON_X = 107;
+    public static final int ALMANAC_BUTTON_Y = 241;
+    public static final int OPTIONS_BUTTON_WIDTH = 209;
+    public static final int OPTIONS_BUTTON_HEIGHT = 46;
+    /** Vertical distance between the almanac, restart and main-menu buttons (NewOptionsDialog.cpp:154-156). */
+    public static final int OPTIONS_BUTTON_SPACING_Y = 43;
+
+    public static final int BACK_TO_GAME_BUTTON_X = 30;
+    public static final int BACK_TO_GAME_BUTTON_Y = 381;
+
+    // PORT-NOTE (deviation): upstream's game-selector-variant extra offsets
+    // (NewOptionsDialog.cpp:159-165, 5/10/15/20px on the control rows) are dropped — see the
+    // PORT-NOTE in resize(). Both variants share the compact in-level layout.
+    /** NewOptionsDialog.cpp:167-170 — the almanac button is pushed down for zen garden / tree of wisdom. */
+    public static final int ZEN_TREE_ALMANAC_OFFSET_Y = 43;
+
+    // NewOptionsDialog.cpp:181-186 (Draw)
+    public static final int MUSIC_LABEL_Y = 140;
+    public static final int SFX_LABEL_Y = 167;
+    public static final int HW_ACCEL_LABEL_Y = 197;
+    public static final int FULLSCREEN_LABEL_Y = 229;
+    public static final int SLIDER_LABELS_OFFSET_X_DEFAULT = 186;
+    /** The right-column labels right-align into their checkboxes with the upstream 9px gap
+     * (294 checkbox / 285 label); moved with the checkboxes, see the HW_ACCEL_CHECKBOX_X note. */
+    public static final int CHECKBOX_LABELS_OFFSET_X_DEFAULT = 285;
+    public static final String OPTION_DLG_SLIDER_LABELS_OFFSET_X = "OPTION_DLG_SLIDER_LABELS_OFFSET_X";
+    public static final String OPTION_DLG_CHECKBOX_LABELS_OFFSET_X = "OPTION_DLG_CHECKBOX_LABELS_OFFSET_X";
+    public static final String OPTION_DLG_LABEL_FONT_SCALE = "OPTION_DLG_LABEL_FONT_SCALE";
+
+    /** The debug-overlay label shares the fullscreen row's label y (NewOptionsDialog.cpp:186). */
+    public static final int DEBUG_INFO_LABEL_Y = FULLSCREEN_LABEL_Y;
+
+    // NewOptionsDialog.h:49-59 (fields)
+    public LawnApp mApp;
+    public Slider mMusicVolumeSlider;
+    public Slider mSfxVolumeSlider;
+    public Checkbox mFullscreenCheckbox;
+    /** The vertical-sync checkbox - this port's content for upstream's hardware-acceleration slot
+     * (id 7's row); the pipeline itself is chosen at launch, see --graphicsBackend. */
+    public Checkbox mVSyncCheckbox;
+    public Checkbox mAutoPauseCheckbox;
+    public Checkbox mDebugInfoCheckbox;
+    public LawnStoneButton mAlmanacButton;
+    public LawnStoneButton mBackToMainButton;
+    public LawnStoneButton mRestartButton;
+    public LawnStoneButton mDisclaimerButton;
+    public NewLawnButton mBackToGameButton;
+    public boolean mFromGameSelector;
+
+    /**
+     * NewOptionsDialog.cpp:39-113.
+     */
+    public NewOptionsDialog(LawnApp theApp, boolean theFromGameSelector) {
+        super(null, null, Dialogs.DIALOG_NEWOPTIONS, true, "Options", "", "", Dialog.BUTTONS_NONE);
+
+        mApp = theApp;
+        mFromGameSelector = theFromGameSelector;
+        setButtonTextColor(new Color(255, 255, 100));
+
+        mAlmanacButton = GameButton.makeButton(NewOptionsDialog_Almanac, this, "[VIEW_ALMANAC_BUTTON]");
+        // PORT-NOTE: deviation from NewOptionsDialog.cpp:50 — upstream labels this button
+        // "[RESTART_LEVEL]", but the retail string table keeps a confirmation question there
+        // (RESTART_LEVEL = "你确定想要重新开始这一关卡吗？"), not a label; the button text is
+        // banked under RESTART_BUTTON ("重新开始"), so this port resolves that key instead.
+        mRestartButton = GameButton.makeButton(NewOptionsDialog_Restart, this, "[RESTART_BUTTON]");
+        mBackToMainButton = GameButton.makeButton(NewOptionsDialog_MainMenu, this, "[MAIN_MENU_BUTTON]");
+        // A port addition: the disclaimer button lives only in the game-selector variant, one
+        // button slot above the credits button. The label, the popup's title and the popup's OK
+        // button all resolve the DISCLAIMER key (English default; a LawnStrings entry overrides).
+        mDisclaimerButton = GameButton.makeButton(
+                NewOptionsDialog_Disclaimer, this, theApp.getString("DISCLAIMER", "Disclaimer"));
+        if (!theFromGameSelector) {
+            mDisclaimerButton.setVisible(false);
+        }
+
+        mBackToGameButton = GameButton.makeNewButton(
+                Dialog.ID_OK,
+                this,
+                "[BACK_TO_GAME]",
+                null,
+                Resources.getImageById(Resources.IMAGE_OPTIONS_BACKTOGAMEBUTTON0_ID),
+                Resources.getImageById(Resources.IMAGE_OPTIONS_BACKTOGAMEBUTTON0_ID),
+                Resources.getImageById(Resources.IMAGE_OPTIONS_BACKTOGAMEBUTTON2_ID));
+        mBackToGameButton.mTranslateX = 0;
+        mBackToGameButton.mTranslateY = 0;
+        mBackToGameButton.mTextOffsetX = -2;
+        mBackToGameButton.mTextOffsetY = -5;
+        mBackToGameButton.mTextDownOffsetX = 0;
+        mBackToGameButton.mTextDownOffsetY = 1;
+        mBackToGameButton.setFont(Resources.getFontById(Resources.FONT_DWARVENTODCRAFT36GREENINSET_ID));
+        mBackToGameButton.setLabelColor(Color.White);
+        mBackToGameButton.setLabelHiliteColor(Color.White);
+        mBackToGameButton.mHiliteFont = Resources.getFontById(Resources.FONT_DWARVENTODCRAFT36BRIGHTGREENINSET_ID);
+
+        mMusicVolumeSlider = new Slider(
+                Resources.getImageById(Resources.IMAGE_OPTIONS_SLIDERSLOT_ID),
+                Resources.getImageById(Resources.IMAGE_OPTIONS_SLIDERKNOB2_ID),
+                NewOptionsDialog_MusicVolume,
+                this);
+        double aMusicVolume = theApp.getMusicVolume();
+        aMusicVolume = Math.max(0.0, Math.min(1.0, aMusicVolume));
+        mMusicVolumeSlider.setValue(aMusicVolume);
+
+        mSfxVolumeSlider = new Slider(
+                Resources.getImageById(Resources.IMAGE_OPTIONS_SLIDERSLOT_ID),
+                Resources.getImageById(Resources.IMAGE_OPTIONS_SLIDERKNOB2_ID),
+                NewOptionsDialog_SoundVolume,
+                this);
+        mSfxVolumeSlider.setValue(theApp.getSfxVolume() / 0.65);
+
+        mFullscreenCheckbox = LawnCommon.makeNewCheckbox(NewOptionsDialog_Fullscreen, this, !theApp.mIsWindowed);
+        mVSyncCheckbox = LawnCommon.makeNewCheckbox(NewOptionsDialog_VSync, this, theApp.mWaitForVSync);
+        mAutoPauseCheckbox = LawnCommon.makeNewCheckbox(NewOptionsDialog_AutoPause, this, theApp.mAutoPause);
+        mDebugInfoCheckbox = LawnCommon.makeNewCheckbox(NewOptionsDialog_DebugInfo, this, theApp.mShowFPS);
+
+        if (mFromGameSelector) {
+            mRestartButton.setVisible(false);
+            mBackToGameButton.setLabel("[DIALOG_BUTTON_OK]");
+            if (showBackToMainAsCredits()) {
+                mBackToMainButton.setLabel("[CREDITS]");
+            } else {
+                mBackToMainButton.setVisible(false);
+            }
+        }
+
+        if (mApp.mGameMode == GameMode.GAMEMODE_CHALLENGE_ICE
+                || mApp.mGameMode == GameMode.GAMEMODE_CHALLENGE_ZEN_GARDEN
+                || mApp.mGameMode == GameMode.GAMEMODE_TREE_OF_WISDOM) {
+            mRestartButton.setVisible(false);
+        }
+        if (mApp.mGameScene == GameScenes.SCENE_LEVEL_INTRO && !mApp.mBoard.mCutScene.isSurvivalRepick()) {
+            mRestartButton.setVisible(false);
+        }
+        if (!mApp.canShowAlmanac()
+                || mApp.mGameScene == GameScenes.SCENE_LEVEL_INTRO
+                || mApp.mGameMode == GameMode.GAMEMODE_CHALLENGE_ZEN_GARDEN
+                || mApp.mGameMode == GameMode.GAMEMODE_TREE_OF_WISDOM
+                || mFromGameSelector) {
+            mAlmanacButton.setVisible(false);
+        }
+    }
+
+    /**
+     * NewOptionsDialog.cpp:85-91 — when opened from the game selector the main-menu button acts as
+     * the credits button iff the adventure is finished and the trial stage is not locked.
+     *
+     * <p>PORT-NOTE (deviation): it now acts as the credits button whenever the dialog is opened
+     * from the game selector, whether the adventure has been finished or not (user request: the
+     * entry is always visible). What the click does still differs - see {@link #buttonDepress}.
+     */
+    public boolean showBackToMainAsCredits() {
+        return mFromGameSelector;
+    }
+
+    /**
+     * NewOptionsDialog.cpp:214 — the SFX slider's normalised value maps to the stored volume as
+     * {@code val * 0.65}. Extracted so the scaling is testable without a live sound system.
+     */
+    public static double sfxVolumeForSlider(double theVal) {
+        return theVal * 0.65;
+    }
+
+    // NewOptionsDialog.cpp:116-119 — upstream returns the menuback image *width* (423), not its height.
+    @Override
+    public int getPreferredHeight(int theWidth) {
+        return Resources.getImageById(Resources.IMAGE_OPTIONS_MENUBACK_ID).getWidth();
+    }
+
+    // NewOptionsDialog.cpp:121-133
+    @Override
+    public void addedToManager(WidgetManager theWidgetManager) {
+        super.addedToManager(theWidgetManager);
+        addWidget(mAlmanacButton);
+        addWidget(mRestartButton);
+        addWidget(mBackToMainButton);
+        addWidget(mDisclaimerButton);
+        addWidget(mMusicVolumeSlider);
+        addWidget(mSfxVolumeSlider);
+        addWidget(mVSyncCheckbox);
+        addWidget(mFullscreenCheckbox);
+        addWidget(mAutoPauseCheckbox);
+        addWidget(mDebugInfoCheckbox);
+        addWidget(mBackToGameButton);
+    }
+
+    // NewOptionsDialog.cpp:135-145
+    @Override
+    public void removedFromManager(WidgetManager theWidgetManager) {
+        super.removedFromManager(theWidgetManager);
+        removeWidget(mAlmanacButton);
+        removeWidget(mMusicVolumeSlider);
+        removeWidget(mSfxVolumeSlider);
+        removeWidget(mFullscreenCheckbox);
+        removeWidget(mVSyncCheckbox);
+        removeWidget(mAutoPauseCheckbox);
+        removeWidget(mDebugInfoCheckbox);
+        removeWidget(mBackToMainButton);
+        removeWidget(mDisclaimerButton);
+        removeWidget(mBackToGameButton);
+        removeWidget(mRestartButton);
+    }
+
+    // NewOptionsDialog.cpp:147-171
+    @Override
+    public void resize(int theX, int theY, int theWidth, int theHeight) {
+        super.resize(theX, theY, theWidth, theHeight);
+
+        // Upstream positions these children in the dialog's own coordinate space
+        // (NewOptionsDialog.cpp:147-171): the widget tree translates each child by its mX/mY when it
+        // draws, so adding the dialog origin here pushed every control outside the dialog's rectangle
+        // and the dialog's own clip removed them (sliders clipped to one pixel column, checkboxes to an
+        // empty rect, the buttons misplaced).
+        mMusicVolumeSlider.resize(MUSIC_SLIDER_X, MUSIC_SLIDER_Y, MUSIC_SLIDER_WIDTH, MUSIC_SLIDER_HEIGHT);
+        mSfxVolumeSlider.resize(SFX_SLIDER_X, SFX_SLIDER_Y, SFX_SLIDER_WIDTH, SFX_SLIDER_HEIGHT);
+        mVSyncCheckbox.resize(HW_ACCEL_CHECKBOX_X, HW_ACCEL_CHECKBOX_Y,
+                HW_ACCEL_CHECKBOX_WIDTH, HW_ACCEL_CHECKBOX_HEIGHT);
+        mAutoPauseCheckbox.resize(AUTO_PAUSE_CHECKBOX_X, AUTO_PAUSE_CHECKBOX_Y,
+                AUTO_PAUSE_CHECKBOX_WIDTH, AUTO_PAUSE_CHECKBOX_HEIGHT);
+        mDebugInfoCheckbox.resize(DEBUG_INFO_CHECKBOX_X, DEBUG_INFO_CHECKBOX_Y,
+                DEBUG_INFO_CHECKBOX_WIDTH, DEBUG_INFO_CHECKBOX_HEIGHT);
+        mFullscreenCheckbox.resize(FULLSCREEN_CHECKBOX_X, FULLSCREEN_CHECKBOX_Y,
+                FULLSCREEN_CHECKBOX_WIDTH, FULLSCREEN_CHECKBOX_HEIGHT);
+        mAlmanacButton.resize(ALMANAC_BUTTON_X, ALMANAC_BUTTON_Y, OPTIONS_BUTTON_WIDTH, OPTIONS_BUTTON_HEIGHT);
+        mRestartButton.resize(mAlmanacButton.mX, mAlmanacButton.mY + OPTIONS_BUTTON_SPACING_Y,
+                OPTIONS_BUTTON_WIDTH, OPTIONS_BUTTON_HEIGHT);
+        mBackToMainButton.resize(mRestartButton.mX, mRestartButton.mY + OPTIONS_BUTTON_SPACING_Y,
+                OPTIONS_BUTTON_WIDTH, OPTIONS_BUTTON_HEIGHT);
+        // Port addition: one button slot above the credits/main-menu button (the slot the restart
+        // button occupies in level; in the selector variant restart is hidden, so the slot is free).
+        mDisclaimerButton.resize(mBackToMainButton.mX, mBackToMainButton.mY - OPTIONS_BUTTON_SPACING_Y,
+                OPTIONS_BUTTON_WIDTH, OPTIONS_BUTTON_HEIGHT);
+        mBackToGameButton.resize(BACK_TO_GAME_BUTTON_X, BACK_TO_GAME_BUTTON_Y,
+                mBackToGameButton.mWidth, mBackToGameButton.mHeight);
+
+        // PORT-NOTE (deviation): upstream pushed the slider/checkbox rows down by 5-20px in the
+        // game-selector variant (NewOptionsDialog.cpp:159-165), which spread the controls apart;
+        // this port keeps both variants on the same compact in-level layout. The almanac button
+        // stays selector-hidden (upstream behaviour, restored after visual testing) — the compact
+        // rows just make the remaining two slots sit evenly.
+
+        if (mApp.mGameMode == GameMode.GAMEMODE_CHALLENGE_ZEN_GARDEN
+                || mApp.mGameMode == GameMode.GAMEMODE_TREE_OF_WISDOM) {
+            mAlmanacButton.mY += ZEN_TREE_ALMANAC_OFFSET_Y;
+        }
+    }
+
+    // NewOptionsDialog.cpp:173-201 — the selector-variant label offsets are dropped, see the
+    // PORT-NOTE in resize()
+    @Override
+    public void draw(Graphics g) {
+        g.drawImage(Resources.getImageById(Resources.IMAGE_OPTIONS_MENUBACK_ID), 0, 0);
+
+        Color aTextColor = new Color(107, 109, 145);
+
+        int aSliderLabelsX = mApp.getInteger(OPTION_DLG_SLIDER_LABELS_OFFSET_X, SLIDER_LABELS_OFFSET_X_DEFAULT);
+        int aCheckboxLabelsX = mApp.getInteger(OPTION_DLG_CHECKBOX_LABELS_OFFSET_X, CHECKBOX_LABELS_OFFSET_X_DEFAULT);
+        float aFontScale = mApp.mDoubleProperties.getOrDefault(OPTION_DLG_LABEL_FONT_SCALE, 1.0).floatValue();
+        if (aFontScale != 1.0f) {
+            g.setScale(aFontScale, aFontScale, 0.0f, 0.0f);
+        }
+        Font aFont = Resources.getFontById(Resources.FONT_DWARVENTODCRAFT18_ID);
+        PvzpCommon.pvzpDrawString(g, mApp.getString("OPTIONS_MUSIC_LABEL", "Music"), aSliderLabelsX, MUSIC_LABEL_Y,
+                aFont, aTextColor, DrawStringJustification.DS_ALIGN_RIGHT);
+        PvzpCommon.pvzpDrawString(g, mApp.getString("OPTIONS_SOUNDFX", "Sound FX"), aSliderLabelsX, SFX_LABEL_Y,
+                aFont, aTextColor, DrawStringJustification.DS_ALIGN_RIGHT);
+        // The vertical-sync checkbox took the hardware-acceleration row's slot (id 7's row); the
+        // label is an English default with a LawnStrings entry ("垂直同步" in the banked string
+        // table, key OPTIONS_V_SYNC).
+        PvzpCommon.pvzpDrawString(g, mApp.getString("OPTIONS_V_SYNC", "VSync"), aCheckboxLabelsX,
+                HW_ACCEL_LABEL_Y, aFont, aTextColor, DrawStringJustification.DS_ALIGN_RIGHT);
+        // The auto-pause checkbox shares the 3D-acceleration row from the left column; like every
+        // other row, its label sits to the left of the checkbox (right-aligned into it).
+        PvzpCommon.pvzpDrawString(g, mApp.getString("OPTIONS_AUTO_PAUSE", "Auto Pause"), AUTO_PAUSE_LABEL_X,
+                HW_ACCEL_LABEL_Y, aFont, aTextColor, DrawStringJustification.DS_ALIGN_RIGHT);
+        // The debug-overlay checkbox is aligned with the fullscreen row from the left column.
+        PvzpCommon.pvzpDrawString(g, mApp.getString("OPTIONS_DEBUG_INFO", "Debug Info"), DEBUG_INFO_LABEL_X,
+                DEBUG_INFO_LABEL_Y, aFont, aTextColor, DrawStringJustification.DS_ALIGN_RIGHT);
+        PvzpCommon.pvzpDrawString(g, mApp.getString("OPTIONS_FULL_SCREEN", "Full Screen"), aCheckboxLabelsX,
+                FULLSCREEN_LABEL_Y, aFont, aTextColor, DrawStringJustification.DS_ALIGN_RIGHT);
+        if (aFontScale != 1.0f) {
+            g.setScale(1.0f, 1.0f, 0.0f, 0.0f);
+        }
+    }
+
+    // NewOptionsDialog.cpp:203-221
+    @Override
+    public void sliderVal(int theId, double theVal) {
+        switch (theId) {
+            case NewOptionsDialog_MusicVolume:
+                mApp.setMusicVolume(theVal);
+                mApp.mSoundSystem.rehookupSoundWithMusicVolume();
+                break;
+
+            case NewOptionsDialog_SoundVolume:
+                mApp.setSfxVolume(sfxVolumeForSlider(theVal));
+                mApp.mSoundSystem.rehookupSoundWithMusicVolume();
+                if (!mSfxVolumeSlider.mDragging) {
+                    mApp.playSample(Resources.SOUND_BUTTONCLICK_ID);
+                }
+                break;
+        }
+    }
+
+    // NewOptionsDialog.cpp:223-281
+    @Override
+    public void checkboxChecked(int theId, boolean checked) {
+        switch (theId) {
+            case NewOptionsDialog_Fullscreen:
+                if (!checked && mApp.mForceFullscreen) {
+                    mApp.doDialog(
+                            Dialogs.DIALOG_COLORDEPTH_EXP,
+                            true,
+                            mApp.getString("NO_WINDOWED_MODE", "No Windowed Mode"),
+                            mApp.getString("INVALID_WINDOWS_MODE",
+                                    "Windowed mode is only available if your desktop was running in either\n"
+                                            + "16 bit or 32 bit color mode when you started the game.\n\n"
+                                            + "If you'd like to run in Windowed mode then you need to quit the game and switch your desktop to 16 or 32 bit color mode."),
+                            "[DIALOG_BUTTON_OK]",
+                            Dialog.BUTTONS_FOOTER);
+
+                    mFullscreenCheckbox.setChecked(true, false);
+                } else {
+                    // PORT-NOTE (deviation from NewOptionsDialog.cpp:223-281 / LawnApp.cpp:1056):
+                    // upstream applies the checkbox only when the dialog closes
+                    // (LawnApp::KillNewOptionsDialog reads it into SwitchScreenMode); this port
+                    // switches the screen mode at once, on every check/uncheck (user request). The
+                    // close-time call stays for the hardware-acceleration checkbox and becomes a
+                    // no-op for the window mode. The 3D argument is the app's current state - the
+                    // acceleration checkbox keeps its apply-on-close timing. LawnApp's override
+                    // re-syncs this checkbox from mIsWindowed (setChecked's false = no listener
+                    // callback), so the path does not re-enter checkboxChecked.
+                    mApp.switchScreenMode(!checked, mApp.is3DAccelerated(), false);
+                }
+                break;
+
+            case NewOptionsDialog_AutoPause:
+                // Applied immediately (the flag is read on the next focus change); the framework's
+                // mute-on-lost-focus rides along so leaving the window also silences music and
+                // sound. Persisted with the rest of the registry values when the game exits.
+                mApp.mAutoPause = checked;
+                mApp.mMuteOnLostFocus = checked;
+                break;
+
+            case NewOptionsDialog_DebugInfo:
+                // Applied immediately (the overlay draws or not on the very next frame); F3 toggles
+                // the same flag at runtime, and it is persisted as the DebugInfo registry value.
+                mApp.mShowFPS = checked;
+                break;
+
+            case NewOptionsDialog_VSync:
+                // Applied immediately on the live renderer (SDL_SetRenderVSync) and persisted with
+                // the rest of the registry values when the game exits. The software renderer has
+                // no vsync - the call is a harmless no-op there.
+                mApp.mWaitForVSync = checked;
+                mApp.applyWaitForVSync();
+                break;
+        }
+    }
+
+    // NewOptionsDialog.cpp:283-298
+    @Override
+    public void keyDown(int theKey) {
+        if (mApp.mBoard != null) {
+            mApp.mBoard.doTypingCheck(theKey);
+        }
+
+        if (theKey == KeyCode.KEYCODE_SPACE || theKey == KeyCode.KEYCODE_RETURN) {
+            super.buttonDepress(Dialog.ID_OK);
+        } else if (theKey == KeyCode.KEYCODE_ESCAPE) {
+            super.buttonDepress(Dialog.ID_CANCEL);
+        }
+    }
+
+    // NewOptionsDialog.cpp:300-303
+    @Override
+    public void buttonPress(int theId) {
+        mApp.playSample(Resources.SOUND_GRAVEBUTTON_ID);
+    }
+
+    // NewOptionsDialog.cpp:305-390
+    @Override
+    public void buttonDepress(int theId) {
+        super.buttonDepress(theId);
+
+        switch (theId) {
+            case NewOptionsDialog_Almanac: {
+                mApp.doAlmanacDialog(SeedType.SEED_NONE, ZombieType.ZOMBIE_INVALID).waitForResult(true);
+                break;
+            }
+
+            case NewOptionsDialog_MainMenu: {
+                if (mFromGameSelector) {
+                    mApp.killNewOptionsDialog();
+                    mApp.killGameSelector();
+                    if (mApp.hasFinishedAdventure()) {
+                        // the retail flow: the zombies' note, then the movie, ending with the
+                        // replay / main-menu buttons
+                        mApp.showAwardScreen(AwardType.AWARD_CREDITS_ZOMBIENOTE, false);
+                    } else {
+                        // PORT-NOTE (deviation): a save that has not beaten adventure skips the
+                        // note and the movie and lands straight on the scrolling final credits
+                        // list, with no replay button (the entry is always visible now)
+                        mApp.showCreditScreen(true);
+                    }
+                } else if (mApp.mBoard != null && mApp.mBoard.needSaveGame()) {
+                    mApp.doConfirmBackToMain();
+                } else if (mApp.mBoard != null && mApp.mBoard.mCutScene != null && mApp.mBoard.mCutScene.isSurvivalRepick()) {
+                    mApp.doConfirmBackToMain();
+                } else {
+                    mApp.mBoardResult = BoardResult.BOARDRESULT_QUIT;
+                    mApp.doBackToMain();
+                }
+                break;
+            }
+
+            case NewOptionsDialog_Restart: {
+                if (mApp.mBoard != null) {
+                    String aDialogTitle;
+                    String aDialogMessage;
+                    if (mApp.isPuzzleMode()) {
+                        aDialogTitle = "[RESTART_PUZZLE_HEADER]";
+                        aDialogMessage = "[RESTART_PUZZLE_BODY]";
+                    } else if (mApp.isChallengeMode()) {
+                        aDialogTitle = "[RESTART_CHALLENGE_HEADER]";
+                        aDialogMessage = "[RESTART_CHALLENGE_BODY]";
+                    } else if (mApp.isSurvivalMode()) {
+                        aDialogTitle = "[RESTART_SURVIVAL_HEADER]";
+                        aDialogMessage = "[RESTART_SURVIVAL_BODY]";
+                    } else {
+                        aDialogTitle = "[RESTART_LEVEL_HEADER]";
+                        aDialogMessage = "[RESTART_LEVEL_BODY]";
+                    }
+
+                    LawnDialog aDialog = (LawnDialog) mApp.doDialog(
+                            Dialogs.DIALOG_CONFIRM_RESTART, true, aDialogTitle, aDialogMessage, "", Dialog.BUTTONS_YES_NO);
+                    aDialog.mLawnYesButton.mLabel = mApp.getString("RESTART_LABEL", "RESTART");
+                    aDialog.mLawnNoButton.mLabel = PvzpStringFile.translate("[DIALOG_BUTTON_CANCEL]");
+
+                    // PORT-NOTE: NewOptionsDialog.cpp:366-380 — upstream answers with
+                    // Dialog::WaitForResult(), which pumps the message loop until a button is
+                    // depressed (Dialog.cpp:410-441). This port's waitForResult returns without
+                    // pumping (sexy/Dialog.java:506), so the answer arrives in
+                    // LawnApp.restartLevelFromOptions(), called from LawnApp.buttonDepress.
+                }
+                break;
+            }
+
+            case NewOptionsDialog_Update:
+                // NewOptionsDialog.cpp:388-390 — upstream creates no button with this id (dead case).
+                mApp.checkForUpdates();
+                break;
+
+            case NewOptionsDialog_Disclaimer: {
+                // Port addition: the standard LawnDialog popup; the title carries the DISCLAIMER
+                // text, the body is the disclaimer arranged as policy paragraphs, and the button
+                // is the standard OK confirmation (DIALOG_BUTTON_OK).
+                String aTitle = mApp.getString("DISCLAIMER", "Disclaimer");
+                mApp.doDialog(Dialogs.DIALOG_INFO, true, aTitle, DISCLAIMER_TEXT,
+                        "[DIALOG_BUTTON_OK]", Dialog.BUTTONS_FOOTER);
+                break;
+            }
+        }
+    }
+}
